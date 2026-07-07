@@ -43,13 +43,26 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
     echo "export MIMO_CWD=\"$CWD\"" >> "$CLAUDE_ENV_FILE"
 fi
 
-# Clean up orphan files from dead sessions using the StatusLine heartbeat:
-# an active session rewrites its state file every few seconds, so a stale mtime
-# (no heartbeat in 2h) means the session crashed or was force-quit. Also reap
-# orphaned jq temp files (crashed mid-write) that the *.json glob never matched.
+# Clean up orphan files from dead sessions using the StatusLine heartbeat.
+# The .json state file is the heartbeat: an active session rewrites it every few
+# seconds, so a stale mtime (no heartbeat in 2h) means the session crashed or was
+# force-quit — safe to delete by its own mtime. Companion files (-changes.log,
+# -postcompact.flag) are NOT keyed on their own mtime: a live, long-idle session
+# whose last edit was hours ago has an old changes.log but a fresh json, and its
+# tracked-files list must survive. So companions are deleted pairwise — only when
+# their session's json is already gone. Also reap orphaned jq temp files (crashed
+# mid-write) that the *.json glob never matched.
 find "$STATE_DIR" -name "*.json" -mmin +120 -delete 2>/dev/null || true
-find "$STATE_DIR" -name "*-changes.log" -mmin +120 -delete 2>/dev/null || true
-find "$STATE_DIR" -name "*-postcompact.flag" -mmin +120 -delete 2>/dev/null || true
+for f in "$STATE_DIR"/*-changes.log "$STATE_DIR"/*-postcompact.flag; do
+    [ -f "$f" ] || continue
+    base=$(basename "$f")
+    case "$base" in
+        *-changes.log)      sid=${base%-changes.log} ;;
+        *-postcompact.flag) sid=${base%-postcompact.flag} ;;
+        *)                  continue ;;
+    esac
+    [ -f "$STATE_DIR/${sid}.json" ] || rm -f "$f"
+done
 find "$STATE_DIR" -name "*.tmp" -mmin +60 -delete 2>/dev/null || true
 
 # ─── Auto-update check (at most once per 24h, never blocks) ──────────────────

@@ -388,6 +388,7 @@ cmd_cleanup() {
 
     NOW=$(date +%s)
     STALE_COUNT=0
+    ORPHAN_COUNT=0
     TMP_COUNT=0
     BACKUP_COUNT=0
 
@@ -402,6 +403,25 @@ cmd_cleanup() {
                 SID=$(basename "$f" .json)
                 rm -f "$f" "$STATE_DIR/${SID}-changes.log" "$STATE_DIR/${SID}-postcompact.flag"
                 STALE_COUNT=$((STALE_COUNT + 1))
+            fi
+        done
+
+        # Sweep orphaned companion files: -changes.log / -postcompact.flag whose
+        # json is already gone (e.g. reaped earlier by session-start cleanup). The
+        # loop above only reaches companions of a still-present stale json, so a
+        # json-less companion would otherwise linger forever. Deleted pairwise —
+        # only when no matching json exists, so live sessions are never touched.
+        for f in "$STATE_DIR"/*-changes.log "$STATE_DIR"/*-postcompact.flag; do
+            [ -f "$f" ] || continue
+            BASE=$(basename "$f")
+            case "$BASE" in
+                *-changes.log)      SID=${BASE%-changes.log} ;;
+                *-postcompact.flag) SID=${BASE%-postcompact.flag} ;;
+                *)                  continue ;;
+            esac
+            if [ ! -f "$STATE_DIR/${SID}.json" ]; then
+                rm -f "$f"
+                ORPHAN_COUNT=$((ORPHAN_COUNT + 1))
             fi
         done
 
@@ -420,6 +440,9 @@ cmd_cleanup() {
         info "Removed $STALE_COUNT stale session(s)"
     else
         info "No stale sessions found (all sessions are active)"
+    fi
+    if [ "$ORPHAN_COUNT" -gt 0 ]; then
+        info "Removed $ORPHAN_COUNT orphaned companion file(s)"
     fi
     info "Removed $TMP_COUNT orphaned temp file(s)"
     info "Removed $BACKUP_COUNT old backup(s) (>${BACKUP_RETENTION_DAYS}d)"
