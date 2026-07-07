@@ -54,10 +54,11 @@ PCT_INT=$(printf "%.0f" "$PERCENTAGE")
 if [ "$PCT_INT" -gt 100 ]; then PCT_INT=100; fi
 if [ "$PCT_INT" -lt 0 ]; then PCT_INT=0; fi
 
-# Create state file if it doesn't exist yet
+# Create state file if it doesn't exist yet (defaults include the gate-owned
+# verification fields so a fresh file is complete).
 if [ ! -f "$STATE_FILE" ]; then
     write_state -n --arg sid "$SESSION_ID" \
-        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false}'
+        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false, save_requested_at: 0, save_attempts: 0, pending_save_kind: ""}'
 fi
 
 # Read current done flags
@@ -72,14 +73,18 @@ elif [ "$PCT_INT" -ge "$CHECKPOINT_THRESHOLD" ] && [ "$CHECKPOINT_DONE" = "false
     THRESHOLD="checkpoint_needed"
 fi
 
-# Update state file (validated atomic write — old state survives a failed jq)
-write_state -n \
+# Update state file IN PLACE (validated atomic write — old state survives a
+# failed jq). Only the statusline-owned fields are set; gate-owned fields
+# (save_requested_at, save_attempts, pending_save_kind) are preserved so a
+# pending-save handshake is not wiped on the next render.
+write_state \
     --arg sid "$SESSION_ID" \
     --argjson pct "$PCT_INT" \
     --arg threshold "$THRESHOLD" \
     --argjson cp_done "$([ "$CHECKPOINT_DONE" = "true" ] && echo true || echo false)" \
     --argjson fs_done "$([ "$FULLSAVE_DONE" = "true" ] && echo true || echo false)" \
-    '{session_id: $sid, percentage: $pct, threshold: $threshold, checkpoint_done: $cp_done, fullsave_done: $fs_done}'
+    '.session_id = $sid | .percentage = $pct | .threshold = $threshold | .checkpoint_done = $cp_done | .fullsave_done = $fs_done' \
+    "$STATE_FILE"
 
 # Build progress bar
 FILLED=$(( PCT_INT * BAR_WIDTH / 100 ))

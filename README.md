@@ -90,9 +90,9 @@ flowchart TB
         SN["Session #N\ndetailed log"]
     end
 
-    RS -. "L7-L14" .-> S1
-    RS -. "L15-L28" .-> S2
-    KD -. "L20" .-> S2
+    RS -. "§S1" .-> S1
+    RS -. "§S2" .-> S2
+    KD -. "§S2" .-> S2
 
     CLAUDE -. "read details\nwhen needed" .-> FULL
 
@@ -103,7 +103,7 @@ flowchart TB
     class FULL secondary
 ```
 
-`CLAUDE.md` entries reference specific line ranges in `CLAUDE-FULL.md` (e.g., `[CLAUDE-FULL.md L7-L14]`), so Claude can read just the relevant section without loading the entire archive.
+`CLAUDE.md` entries reference sessions in `CLAUDE-FULL.md` by **anchor** (e.g., `[CLAUDE-FULL.md §S12]`). Each session is a heading `## S<N> — YYYY-MM-DD — <slug>`; Claude locates one with `grep -n '^## S' CLAUDE-FULL.md` and reads from that line — no need to load the whole archive. Anchors don't rot when the archive is edited, unlike the line ranges older versions used. Run `mimo sessions` to list every anchor in the current project.
 
 ### Session lifecycle
 
@@ -140,7 +140,7 @@ sequenceDiagram
     rect rgb(212, 237, 218)
     Note over U,B: Post-compact
     C->>M: Memory state auto-injected
-    C-->>F: Read specific lines if needed
+    C-->>F: Read a session anchor if needed
     Note over C: Picks up where it left off
     end
 ```
@@ -169,6 +169,8 @@ The status line tracks context window usage in real time:
 - **80%** — full save: Claude writes a comprehensive session log
 
 The stop hook blocks Claude from ending a turn until the required save is complete.
+
+**Verified saves.** The stop hook does not take Claude's word for it. When a threshold is crossed it records the request time and blocks; on the next stop it confirms the save actually happened by checking that `CLAUDE.md`'s modification time advanced past the request time (a phrase like "checkpoint saved" is accepted as a secondary signal). Only then are the done flags set. A crashed or skipped save is retried once; if the second attempt still shows no write, mimo gives up and lets the session continue rather than blocking forever. Evidence, not trust.
 
 ### Slash commands
 
@@ -212,12 +214,14 @@ mimo installs 9 hooks into Claude Code's hook system:
 | `session-end-backup.sh` | SessionEnd | Final transcript backup, cleans up session state file, changes log, and post-compact flag |
 | `subagent-context.sh` | SubagentStart | Injects "Memory — Current State" and context % into subagent context |
 | `user-prompt-context.sh` | UserPromptSubmit | One-shot post-compact context recovery — injects memory state on first prompt after compaction (zero overhead normally) |
-| `track-changes.sh` | PostToolUse (Write\|Edit) | Async file change tracker — appends modified file paths to per-session log |
+| `track-changes.sh` | PostToolUse (Write\|Edit\|NotebookEdit) | Async file change tracker — appends modified file paths to per-session log |
 
 ## CLI
 
 ```bash
 mimo status      # Diagnostic: hooks, skills, settings, dependencies, active/stale sessions
+mimo doctor      # Deep diagnostics — settings registrations, statusLine, config, version, orphans, PATH
+mimo sessions    # List CLAUDE-FULL.md session anchors in the current project
 mimo init        # Re-initialize memory files in current project
 mimo cleanup     # Remove stale session state, orphaned temp files, and old backups (>30d)
 mimo update      # Check for and install the latest version
@@ -226,6 +230,10 @@ mimo uninstall   # Remove mimo (preserves your memory data)
 ```
 
 `mimo status` marks a session `stale` when its state file hasn't been touched (no StatusLine heartbeat) in over 2 hours — a sign the session crashed or was force-quit. `mimo cleanup` reaps those, plus orphaned temp files and transcript backups older than 30 days.
+
+`mimo doctor` goes deeper than `status`: it asserts every one of the eight hook event registrations is present in `settings.json` by exact command, warns **loudly** if the `statusLine` no longer points at `statusline-memory.sh` (which silently kills every threshold), checks the `PostToolUse` matcher still includes `NotebookEdit`, that hooks are executable and version-stamped, that the installed CLI version matches the recorded one, that `~/.claude/mimo.conf` sources cleanly and has only known keys, counts orphan temp files / stale sessions / backup size, and confirms `~/.local/bin` is on your `PATH`. It exits non-zero if any of those are failures (warnings don't fail).
+
+`mimo sessions` lists the `## S<N> — date — slug` anchors in the current project's `CLAUDE-FULL.md`, newest last, with the line each starts on (entries from the legacy line-reference era aren't listed).
 
 ## File locations
 
@@ -350,6 +358,9 @@ Yes. Each Claude Code session gets its own isolated state file (`~/.claude/memor
 
 **Does Claude resume working after a save interruption?**
 Yes. When the stop hook triggers at 50% or 80%, Claude performs the save and then immediately picks up the task it was working on before the interruption. No need to re-ask.
+
+**What happens if Claude skips a save?**
+The stop hook verifies saves by evidence, not trust: it records when it asked for a save and only marks it done once `CLAUDE.md`'s modification time advances past that moment (or Claude says "checkpoint saved" / "memory saved"). If a save crashes or is skipped, the hook retries the request exactly once on the next stop. If the second attempt still shows no write to `CLAUDE.md`, mimo gives up and lets the session continue — it never blocks you forever waiting on a save that isn't happening, and it never records a save that didn't happen as done.
 
 **Do subagents know about mimo?**
 Yes. The SubagentStart hook automatically injects "Memory — Current State" and the parent session's context % into every subagent. Subagents can see what you're working on and how much context remains without any extra configuration.

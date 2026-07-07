@@ -6,7 +6,7 @@ Blockers: None
 
 ## Memory — Recent Sessions
 <!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
+<!-- Each entry references a CLAUDE-FULL.md anchor like [CLAUDE-FULL.md §S12] -->
 
 ## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
+<!-- One-liner + CLAUDE-FULL.md anchor (e.g. [CLAUDE-FULL.md §S12]); max 10, move oldest into its session entry -->

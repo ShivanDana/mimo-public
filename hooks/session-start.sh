@@ -38,10 +38,11 @@ write_state() {
     fi
 }
 
-# Create state for new session (idempotent — preserves existing state on resume)
+# Create state for new session (idempotent — preserves existing state on resume).
+# Includes the gate-owned verification fields so a fresh file is complete.
 if [ ! -f "$STATE_FILE" ]; then
     write_state -n --arg sid "$SESSION_ID" \
-        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false}'
+        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false, save_requested_at: 0, save_attempts: 0, pending_save_kind: ""}'
 fi
 
 # Export env vars for other hooks via CLAUDE_ENV_FILE
@@ -125,9 +126,10 @@ Blockers: None
 
 ## Memory — Recent Sessions
 <!-- Rolling list, max 7 entries. Oldest dropped. -->
+<!-- Each entry references a CLAUDE-FULL.md anchor like [CLAUDE-FULL.md §S12] -->
 
 ## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
+<!-- One-liner + CLAUDE-FULL.md anchor (e.g. [CLAUDE-FULL.md §S12]); max 10, move oldest into its session entry -->
 MEMORY_SECTIONS
     fi
 }
@@ -202,8 +204,8 @@ if [ "$DO_AUTOINIT" = "true" ]; then
 # Deep Memory Archive
 
 <!-- Detailed session logs for long-term context preservation. -->
-
-## Sessions
+<!-- Each session is a heading: ## S<N> — YYYY-MM-DD — <short-slug>  (e.g. ## S12 — 2026-03-08 — anchor refs). -->
+<!-- CLAUDE.md references entries by anchor, e.g. [CLAUDE-FULL.md §S12]. Locate one with: grep -n '^## S' CLAUDE-FULL.md -->
 ARCHIVE
         fi
         if [ -z "$AUTO_INIT_MSG" ]; then
@@ -224,10 +226,16 @@ if [ -n "$AUTO_INIT_MSG" ]; then
     MSG="${MSG}\n${AUTO_INIT_MSG}"
 fi
 
-# Check for deep memory archive
+# Check for deep memory archive. Reference sessions by anchor (## S<N>), not
+# line ranges — surface the latest session number so recall is a single grep.
 if [ -f "$CWD/CLAUDE-FULL.md" ]; then
     LINES=$(wc -l < "$CWD/CLAUDE-FULL.md" | tr -d ' ')
-    MSG="${MSG}\nDeep memory archive: CLAUDE-FULL.md (${LINES} lines). Read specific line ranges as needed."
+    LATEST_ANCHOR=$(grep -E '^## S[0-9]' "$CWD/CLAUDE-FULL.md" 2>/dev/null | tail -1 | sed -E 's/^## (S[0-9]+).*/\1/')
+    if [ -n "$LATEST_ANCHOR" ]; then
+        MSG="${MSG}\nDeep memory archive: CLAUDE-FULL.md (${LINES} lines, latest: ${LATEST_ANCHOR}). Locate sessions with grep '^## S'."
+    else
+        MSG="${MSG}\nDeep memory archive: CLAUDE-FULL.md (${LINES} lines). Locate sessions with grep '^## S'."
+    fi
 fi
 
 # Include update notification if available

@@ -20,7 +20,12 @@ MSG="[MIMO] Continuing after compaction. Read CLAUDE.md 'Memory' sections for pr
 
 if [ -f "$CWD/CLAUDE-FULL.md" ]; then
     LINES=$(wc -l < "$CWD/CLAUDE-FULL.md" | tr -d ' ')
-    MSG="${MSG} CLAUDE-FULL.md available (${LINES} lines)."
+    LATEST_ANCHOR=$(grep -E '^## S[0-9]' "$CWD/CLAUDE-FULL.md" 2>/dev/null | tail -1 | sed -E 's/^## (S[0-9]+).*/\1/')
+    if [ -n "$LATEST_ANCHOR" ]; then
+        MSG="${MSG} CLAUDE-FULL.md available (${LINES} lines, latest: ${LATEST_ANCHOR}; grep '^## S' to locate sessions)."
+    else
+        MSG="${MSG} CLAUDE-FULL.md available (${LINES} lines)."
+    fi
 fi
 
 jq -n --arg ctx "$MSG" \

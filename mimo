@@ -40,6 +40,7 @@ NC='\033[0m'
 
 ok()    { printf "  ${GREEN}[ok]${NC} %s\n" "$1"; }
 fail()  { printf "  ${RED}[!!]${NC} %s\n" "$1"; }
+warn()  { printf "  ${YELLOW}[warn]${NC} %s\n" "$1"; }
 dim()   { printf "  ${YELLOW}[-]${NC}  %s\n" "$1"; }
 info()  { printf "${GREEN}[mimo]${NC} %s\n" "$1"; }
 error() { printf "${RED}[mimo]${NC} %s\n" "$1" >&2; }
@@ -184,9 +185,10 @@ Blockers: None
 
 ## Memory — Recent Sessions
 <!-- Rolling list, max 7 entries. Oldest dropped. -->
+<!-- Each entry references a CLAUDE-FULL.md anchor like [CLAUDE-FULL.md §S12] -->
 
 ## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
+<!-- One-liner + CLAUDE-FULL.md anchor (e.g. [CLAUDE-FULL.md §S12]); max 10, move oldest into its session entry -->
 MEMORY_SECTIONS
     fi
 }
@@ -280,8 +282,8 @@ cmd_init() {
 # Deep Memory Archive
 
 <!-- Detailed session logs for long-term context preservation. -->
-
-## Sessions
+<!-- Each session is a heading: ## S<N> — YYYY-MM-DD — <short-slug>  (e.g. ## S12 — 2026-03-08 — anchor refs). -->
+<!-- CLAUDE.md references entries by anchor, e.g. [CLAUDE-FULL.md §S12]. Locate one with: grep -n '^## S' CLAUDE-FULL.md -->
 ARCHIVE
         fi
         ok "Created CLAUDE-FULL.md"
@@ -408,6 +410,214 @@ cmd_cleanup() {
     echo ""
 }
 
+cmd_sessions() {
+    echo ""
+    printf "${BOLD}mimo sessions${NC}\n"
+    echo ""
+    if [ ! -f "CLAUDE-FULL.md" ]; then
+        dim "No CLAUDE-FULL.md in the current directory (run: mimo init)"
+        echo ""
+        return 0
+    fi
+
+    # Session anchors: ## S<N> — YYYY-MM-DD — <slug>. Match S followed by a digit
+    # so a stray "## Sessions" header (legacy template) never counts.
+    MATCHES=$(grep -nE '^## S[0-9]+ ' CLAUDE-FULL.md 2>/dev/null || true)
+    if [ -z "$MATCHES" ]; then
+        dim "No § session anchors found in CLAUDE-FULL.md."
+        dim "Entries from the legacy line-reference era won't appear here — only new '## S<N>' anchors are listed."
+        echo ""
+        return 0
+    fi
+
+    # grep returns file order: oldest first, newest last.
+    printf '%s\n' "$MATCHES" | while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        lineno=${line%%:*}
+        heading=${line#*:}
+        num=$(printf '%s' "$heading" | sed -E 's/^(## S[0-9]+).*/\1/; s/^## //')
+        detail=$(printf '%s' "$heading" | sed -E 's/^## S[0-9]+[[:space:]]*//')
+        printf "  ${BOLD}%s${NC}  %s  ${YELLOW}(line %s)${NC}\n" "$num" "$detail" "$lineno"
+    done
+    echo ""
+}
+
+cmd_doctor() {
+    echo ""
+    printf "${BOLD}mimo doctor${NC} — deep diagnostics\n"
+    echo ""
+    local fails=0
+
+    # ── Hook registrations in settings.json ──────────────────────────────────
+    printf "${BOLD}Hook registrations (settings.json):${NC}\n"
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        fail "settings.json not found at $SETTINGS_FILE"
+        fails=$((fails + 1))
+    else
+        check_reg() {
+            # $1 = human label, $2 = exact command string expected in settings
+            if jq -e --arg c "$2" \
+                '[.hooks[]?[]?.hooks[]?.command // ""] | any(. == $c)' \
+                "$SETTINGS_FILE" >/dev/null 2>&1; then
+                ok "$1"
+            else
+                fail "$1 — missing registration ($2)"
+                fails=$((fails + 1))
+            fi
+        }
+        check_reg "SessionStart (startup|resume)" "bash ~/.claude/hooks/session-start.sh"
+        check_reg "SessionStart (compact)"        "bash ~/.claude/hooks/session-start-compact.sh"
+        check_reg "Stop"                          "bash ~/.claude/hooks/memory-gate.sh"
+        check_reg "PreCompact"                    "bash ~/.claude/hooks/precompact-save.sh"
+        check_reg "SessionEnd"                    "bash ~/.claude/hooks/session-end-backup.sh"
+        check_reg "SubagentStart"                 "bash ~/.claude/hooks/subagent-context.sh"
+        check_reg "UserPromptSubmit"              "bash ~/.claude/hooks/user-prompt-context.sh"
+        check_reg "PostToolUse"                   "bash ~/.claude/hooks/track-changes.sh"
+
+        # statusLine — the single point of failure for the whole system.
+        SL=$(jq -r '.statusLine.command // ""' "$SETTINGS_FILE" 2>/dev/null || echo "")
+        if echo "$SL" | grep -q 'statusline-memory.sh'; then
+            ok "statusLine → statusline-memory.sh"
+        else
+            fail "statusLine does NOT point at statusline-memory.sh — thresholds are DEAD"
+            fail "  (no heartbeat, no checkpoint/full-save prompts). Current: '${SL:-<unset>}'"
+            fails=$((fails + 1))
+        fi
+
+        # PostToolUse matcher must include NotebookEdit.
+        if jq -e '
+            [.hooks.PostToolUse[]?
+             | select((.hooks // []) | any(.command // "" | contains("track-changes.sh")))
+             | .matcher // ""] | any(contains("NotebookEdit"))
+        ' "$SETTINGS_FILE" >/dev/null 2>&1; then
+            ok "PostToolUse matcher includes NotebookEdit"
+        else
+            warn "PostToolUse matcher does not include NotebookEdit (notebook edits untracked)"
+        fi
+    fi
+
+    # ── Hook scripts ─────────────────────────────────────────────────────────
+    echo ""
+    printf "${BOLD}Hook scripts:${NC}\n"
+    # Reconstruct the version sentinel from two pieces so the installer's global
+    # sed (s/__VERSION__/<version>/g over this CLI) does not rewrite this grep
+    # pattern — otherwise the installed doctor would grep hooks for the version
+    # number and match their own "# mimo v<version>" header.
+    local vsentinel="__VER""SION__"
+    for hook in statusline-memory.sh memory-gate.sh precompact-save.sh session-start.sh session-start-compact.sh session-end-backup.sh subagent-context.sh user-prompt-context.sh track-changes.sh; do
+        dest="$HOOKS_DIR/$hook"
+        if [ ! -f "$dest" ]; then
+            fail "$hook missing"
+            fails=$((fails + 1))
+        elif [ ! -x "$dest" ]; then
+            fail "$hook not executable"
+            fails=$((fails + 1))
+        elif grep -qF "$vsentinel" "$dest" 2>/dev/null; then
+            fail "$hook contains literal ${vsentinel} (version not stamped)"
+            fails=$((fails + 1))
+        else
+            ok "$hook"
+        fi
+    done
+
+    # ── Version consistency ──────────────────────────────────────────────────
+    echo ""
+    printf "${BOLD}Version:${NC}\n"
+    INSTALLED_VER=$(cat "$STATE_DIR/mimo-installed-version" 2>/dev/null || echo "")
+    if [ -z "$INSTALLED_VER" ]; then
+        warn "no mimo-installed-version file (run the installer)"
+    elif [ "$INSTALLED_VER" = "$MIMO_VERSION" ]; then
+        ok "CLI v${MIMO_VERSION} matches installed-version file"
+    else
+        fail "CLI v${MIMO_VERSION} != installed-version file (v${INSTALLED_VER}) — stale CLI on PATH?"
+        fails=$((fails + 1))
+    fi
+
+    # ── Config ───────────────────────────────────────────────────────────────
+    echo ""
+    printf "${BOLD}Config (${MIMO_CONF}):${NC}\n"
+    if [ ! -f "$MIMO_CONF" ]; then
+        dim "no mimo.conf (using built-in defaults)"
+    else
+        if ( set -euo pipefail; . "$MIMO_CONF" ) >/dev/null 2>&1; then
+            ok "sources cleanly"
+        else
+            fail "mimo.conf fails to source (syntax error) — hooks may break"
+            fails=$((fails + 1))
+        fi
+        KNOWN="CHECKPOINT_THRESHOLD FULLSAVE_THRESHOLD BAR_WIDTH AUTO_INIT WORKFLOW_BLOCK BACKUP_RETENTION_DAYS STALE_MINUTES"
+        CONF_KEYS=$(grep -E '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' "$MIMO_CONF" 2>/dev/null \
+            | sed -E 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=.*/\1/' || true)
+        UNKNOWN=""
+        for key in $CONF_KEYS; do
+            found=false
+            for k in $KNOWN; do [ "$key" = "$k" ] && found=true && break; done
+            [ "$found" = "false" ] && UNKNOWN="$UNKNOWN $key"
+        done
+        if [ -n "$UNKNOWN" ]; then
+            warn "unknown config key(s):$UNKNOWN"
+        else
+            ok "only known keys"
+        fi
+    fi
+
+    # ── State + backups ──────────────────────────────────────────────────────
+    echo ""
+    printf "${BOLD}State + backups:${NC}\n"
+    TMP_ORPHANS=0
+    STALE=0
+    NOW=$(date +%s)
+    if [ -d "$STATE_DIR" ]; then
+        TMP_ORPHANS=$(find "$STATE_DIR" -name "*.tmp" 2>/dev/null | wc -l | tr -d ' ')
+        for f in "$STATE_DIR"/*.json; do
+            [ -f "$f" ] || continue
+            case "$f" in *.tmp) continue ;; esac
+            LU=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+            [ $(( NOW - LU )) -gt "$STALE_THRESHOLD" ] && STALE=$((STALE + 1))
+        done
+    fi
+    if [ "$TMP_ORPHANS" -gt 0 ]; then
+        warn "$TMP_ORPHANS orphan *.tmp file(s) in memory-state (run: mimo cleanup)"
+    else
+        ok "no orphan temp files"
+    fi
+    if [ "$STALE" -gt 0 ]; then
+        warn "$STALE stale session(s) (run: mimo cleanup)"
+    else
+        ok "no stale sessions"
+    fi
+    if [ -d "$BACKUP_DIR" ]; then
+        BSIZE=$(du -sh "$BACKUP_DIR" 2>/dev/null | awk '{print $1}')
+        BKB=$(du -sk "$BACKUP_DIR" 2>/dev/null | awk '{print $1}')
+        case "${BKB:-0}" in ''|*[!0-9]*) BKB=0 ;; esac
+        if [ "$BKB" -gt 512000 ]; then
+            warn "backups dir is ${BSIZE} (>500MB — consider mimo cleanup)"
+        else
+            ok "backups dir: ${BSIZE:-0}"
+        fi
+    else
+        dim "no backups dir yet"
+    fi
+
+    # ── PATH ─────────────────────────────────────────────────────────────────
+    echo ""
+    printf "${BOLD}PATH:${NC}\n"
+    if echo "$PATH" | tr ':' '\n' | grep -q "^$HOME/.local/bin\$"; then
+        ok "~/.local/bin in PATH"
+    else
+        warn "~/.local/bin not in PATH — the mimo CLI may not be found in new shells"
+    fi
+
+    echo ""
+    if [ "$fails" -gt 0 ]; then
+        error "doctor found $fails problem(s) — see [!!] lines above"
+        echo ""
+        exit 1
+    fi
+    info "all checks passed"
+    echo ""
+}
+
 cmd_help() {
     cat << HELP
 mimo v${MIMO_VERSION} — hook-based memory system for Claude Code
@@ -419,6 +629,9 @@ Commands:
                  --with-workflow  include the Workflow Orchestration block
                  --force-home     allow init inside \$HOME (normally refused)
   status      Show diagnostic information (hooks, skills, config, sessions)
+  doctor      Deep diagnostics (settings registrations, statusLine, config,
+              version, orphans, PATH); exits non-zero on any failure
+  sessions    List CLAUDE-FULL.md session anchors in the current project
   cleanup     Remove stale session state, orphaned temp files, and old backups
   update      Check for and install the latest version
   version     Print version
@@ -449,6 +662,8 @@ CMD="${1:-help}"
 case "$CMD" in
     init)      cmd_init "$@" ;;
     status)    cmd_status ;;
+    doctor)    cmd_doctor ;;
+    sessions)  cmd_sessions ;;
     cleanup)   cmd_cleanup ;;
     update)    cmd_update ;;
     version)   cmd_version ;;
