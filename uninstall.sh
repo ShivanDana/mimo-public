@@ -44,6 +44,12 @@ for skill in save save-full pcompact; do
     fi
 done
 
+# ─── 1c. Remove mimo-managed templates (not user data) ──────────────────────
+if [ -d "$HOME/.claude/mimo-templates" ]; then
+    rm -rf "$HOME/.claude/mimo-templates"
+    info "Removed ~/.claude/mimo-templates/"
+fi
+
 # ─── 2. Remove mimo entries from settings.json ───────────────────────────────
 if [ -f "$SETTINGS_FILE" ]; then
     if ! command -v jq &>/dev/null; then
@@ -101,6 +107,7 @@ done
 # ─── 4. Preserve user data ───────────────────────────────────────────────────
 echo ""
 warn "Preserved (your data):"
+echo "  ~/.claude/mimo.conf      — your configuration"
 echo "  ~/.claude/backups/       — transcript backups"
 echo "  ~/.claude/memory-state/  — session state"
 echo "  Project CLAUDE.md and CLAUDE-FULL.md files"

@@ -18,7 +18,7 @@ NC='\033[0m'
 info()  { printf "${GREEN}[mimo]${NC} %s\n" "$1"; }
 warn()  { printf "${YELLOW}[mimo]${NC} %s\n" "$1"; }
 error() { printf "${RED}[mimo]${NC} %s\n" "$1" >&2; }
-step()  { printf "${BOLD}[%s/6]${NC} %s\n" "$1" "$2"; }
+step()  { printf "${BOLD}[%s/7]${NC} %s\n" "$1" "$2"; }
 
 REPO_RAW="https://raw.githubusercontent.com/ShivanDana/mimo"
 REPO_ARCHIVE="https://github.com/ShivanDana/mimo/archive/refs"
@@ -75,6 +75,8 @@ STATE_DIR="$HOME/.claude/memory-state"
 BACKUP_DIR="$HOME/.claude/backups"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 SKILLS_DIR="$HOME/.claude/skills"
+TEMPLATES_DIR="$HOME/.claude/mimo-templates"
+MIMO_CONF="$HOME/.claude/mimo.conf"
 CLI_DIR="$HOME/.local/bin"
 
 # ─── Step 1: Preflight checks ────────────────────────────────────────────────
@@ -140,8 +142,44 @@ done
 
 info "Installed skills:$SKILL_LIST"
 
-# ─── Step 4: Merge settings.json ─────────────────────────────────────────────
-step 4 "Configuring settings.json"
+# ─── Step 4: Install templates + config ──────────────────────────────────────
+step 4 "Installing templates + config"
+
+# Templates are mimo-managed (session-start.sh and `mimo init` read CLAUDE.md
+# scaffolding from here). Always refresh — updates should ship new template text.
+if [ -d "$SRC_DIR/templates" ]; then
+    mkdir -p "$TEMPLATES_DIR"
+    TPL_COUNT=0
+    for tpl in "$SRC_DIR"/templates/*; do
+        [ -f "$tpl" ] || continue
+        tname=$(basename "$tpl")
+        # mimo.conf is the user config seed, not a runtime template — skip it here.
+        [ "$tname" = "mimo.conf" ] && continue
+        cp "$tpl" "$TEMPLATES_DIR/$tname" || { error "Failed to copy template $tname."; exit 1; }
+        TPL_COUNT=$((TPL_COUNT + 1))
+    done
+    info "Installed $TPL_COUNT templates to $TEMPLATES_DIR"
+else
+    warn "No templates/ in source — hooks will use built-in fallbacks"
+fi
+
+# User config: seed from the template ONLY when absent — never clobber a
+# user-edited config. The file is fully commented (all defaults), so a fresh
+# install changes no behavior until the user uncomments a key.
+if [ ! -f "$MIMO_CONF" ]; then
+    if [ -f "$SRC_DIR/templates/mimo.conf" ]; then
+        cp "$SRC_DIR/templates/mimo.conf" "$MIMO_CONF" \
+            || { error "Failed to create $MIMO_CONF."; exit 1; }
+        info "Created config template at $MIMO_CONF"
+    else
+        warn "templates/mimo.conf missing — skipping config seed"
+    fi
+else
+    info "Config exists at $MIMO_CONF (preserved)"
+fi
+
+# ─── Step 5: Merge settings.json ─────────────────────────────────────────────
+step 5 "Configuring settings.json"
 
 # Define mimo's hook configuration as JSON
 MIMO_HOOKS=$(cat <<'MJSON'
@@ -258,8 +296,8 @@ else
     fi
 fi
 
-# ─── Step 5: Install mimo CLI + uninstaller ──────────────────────────────────
-step 5 "Installing mimo CLI"
+# ─── Step 6: Install mimo CLI + uninstaller ──────────────────────────────────
+step 6 "Installing mimo CLI"
 
 mkdir -p "$CLI_DIR"
 
@@ -287,8 +325,8 @@ if ! echo "$PATH" | tr ':' '\n' | grep -q "$HOME/.local/bin"; then
     echo ""
 fi
 
-# ─── Step 6: Done ────────────────────────────────────────────────────────────
-step 6 "Installation complete"
+# ─── Step 7: Done ────────────────────────────────────────────────────────────
+step 7 "Installation complete"
 
 # Record installed version for update checks
 mkdir -p "$STATE_DIR"

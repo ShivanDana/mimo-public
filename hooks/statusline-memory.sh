@@ -3,12 +3,15 @@
 # Reads context usage from stdin JSON, writes threshold state, outputs colored bar
 set -euo pipefail
 
-# Thresholds — lower for testing (e.g., CHECKPOINT=5, FULLSAVE=15)
+STATE_DIR="$HOME/.claude/memory-state"
+
+# ─── Config (defaults, then user overrides via ~/.claude/mimo.conf) ──────────
 CHECKPOINT_THRESHOLD=50
 FULLSAVE_THRESHOLD=80
-
-STATE_DIR="$HOME/.claude/memory-state"
 BAR_WIDTH=20
+MIMO_CONF="${MIMO_CONF:-$HOME/.claude/mimo.conf}"
+# shellcheck disable=SC1090
+[ -f "$MIMO_CONF" ] && . "$MIMO_CONF"
 
 mkdir -p "$STATE_DIR"
 

@@ -16,11 +16,21 @@ HOOKS_DIR="$HOME/.claude/hooks"
 STATE_DIR="$HOME/.claude/memory-state"
 BACKUP_DIR="$HOME/.claude/backups"
 SETTINGS_FILE="$HOME/.claude/settings.json"
+TEMPLATES_DIR="${MIMO_TEMPLATES_DIR:-$HOME/.claude/mimo-templates}"
 
-# Sessions with no StatusLine heartbeat in this many seconds are considered stale
-STALE_THRESHOLD=7200
-# Transcript backups older than this many days are pruned by 'mimo cleanup'
+# ─── Config (defaults, then user overrides via ~/.claude/mimo.conf) ──────────
+CHECKPOINT_THRESHOLD=50
+FULLSAVE_THRESHOLD=80
+BAR_WIDTH=20
+AUTO_INIT=git-only
+WORKFLOW_BLOCK=off
 BACKUP_RETENTION_DAYS=30
+STALE_MINUTES=120
+MIMO_CONF="${MIMO_CONF:-$HOME/.claude/mimo.conf}"
+# shellcheck disable=SC1090
+[ -f "$MIMO_CONF" ] && . "$MIMO_CONF"
+# Sessions with no StatusLine heartbeat in this many seconds are considered stale
+STALE_THRESHOLD=$(( STALE_MINUTES * 60 ))
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -93,6 +103,27 @@ cmd_status() {
     done
 
     echo ""
+    printf "${BOLD}Config:${NC}\n"
+    if [ -f "$MIMO_CONF" ]; then
+        OVERRIDES=""
+        [ "$CHECKPOINT_THRESHOLD" != "50" ]  && OVERRIDES="$OVERRIDES CHECKPOINT_THRESHOLD=$CHECKPOINT_THRESHOLD"
+        [ "$FULLSAVE_THRESHOLD" != "80" ]    && OVERRIDES="$OVERRIDES FULLSAVE_THRESHOLD=$FULLSAVE_THRESHOLD"
+        [ "$BAR_WIDTH" != "20" ]             && OVERRIDES="$OVERRIDES BAR_WIDTH=$BAR_WIDTH"
+        [ "$AUTO_INIT" != "git-only" ]       && OVERRIDES="$OVERRIDES AUTO_INIT=$AUTO_INIT"
+        [ "$WORKFLOW_BLOCK" != "off" ]       && OVERRIDES="$OVERRIDES WORKFLOW_BLOCK=$WORKFLOW_BLOCK"
+        [ "$BACKUP_RETENTION_DAYS" != "30" ] && OVERRIDES="$OVERRIDES BACKUP_RETENTION_DAYS=$BACKUP_RETENTION_DAYS"
+        [ "$STALE_MINUTES" != "120" ]        && OVERRIDES="$OVERRIDES STALE_MINUTES=$STALE_MINUTES"
+        if [ -n "$OVERRIDES" ]; then
+            ok "$MIMO_CONF (overrides:)"
+            for kv in $OVERRIDES; do dim "$kv"; done
+        else
+            ok "$MIMO_CONF (all defaults)"
+        fi
+    else
+        dim "defaults (no ~/.claude/mimo.conf)"
+    fi
+
+    echo ""
     printf "${BOLD}Active sessions:${NC}\n"
     SESSION_COUNT=0
     NOW=$(date +%s)
@@ -138,75 +169,13 @@ cmd_status() {
     echo ""
 }
 
-cmd_init() {
-    echo ""
-    printf "${BOLD}mimo init${NC} — setting up memory for this project\n"
-    echo ""
-
-    WORKFLOW_MARKER="## Workflow Orchestration"
-    MEMORY_MARKER="Memory — Current State"
-
-    # CLAUDE.md
-    if [ ! -f "CLAUDE.md" ]; then
-        # Create fresh: workflow block at top, memory sections at bottom
-        cat > CLAUDE.md << 'MIMO_CLAUDE_MD'
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-
+# Emit the memory sections — from the installed template, with a built-in
+# fallback so `mimo init` still works if templates are missing.
+_emit_memory_sections() {
+    if [ -f "$TEMPLATES_DIR/claude-md-memory-sections.md" ]; then
+        cat "$TEMPLATES_DIR/claude-md-memory-sections.md"
+    else
+        cat << 'MEMORY_SECTIONS'
 ## Memory — Current State
 <!-- Updated by mimo checkpoint/save hooks -->
 Last session: (not yet set)
@@ -215,100 +184,88 @@ Blockers: None
 
 ## Memory — Recent Sessions
 <!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
 
 ## Memory — Key Decisions
 <!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
-MIMO_CLAUDE_MD
-        ok "Created CLAUDE.md with workflow guidance and memory sections"
+MEMORY_SECTIONS
+    fi
+}
+
+cmd_init() {
+    local with_workflow=false force_home=false
+    for arg in "$@"; do
+        case "$arg" in
+            --with-workflow) with_workflow=true ;;
+            --force-home)    force_home=true ;;
+            *) error "Unknown option for init: $arg"; exit 1 ;;
+        esac
+    done
+    # WORKFLOW_BLOCK=on in the config also opts every init into the workflow block.
+    [ "$WORKFLOW_BLOCK" = "on" ] && with_workflow=true
+
+    # $HOME guard: a CLAUDE.md here loads into every Claude Code session
+    # (cross-project contamination). Require an explicit override.
+    if [ "$(pwd)" = "$HOME" ] && [ "$force_home" != "true" ]; then
+        error "Refusing to initialize memory in your home directory ($HOME)."
+        error "A CLAUDE.md here loads into EVERY Claude Code session (cross-project contamination)."
+        error "Re-run with 'mimo init --force-home' if you really mean to."
+        exit 1
+    fi
+
+    echo ""
+    printf "${BOLD}mimo init${NC} — setting up memory for this project\n"
+    echo ""
+
+    MEMORY_MARKER="Memory — Current State"
+
+    # CLAUDE.md
+    if [ ! -f "CLAUDE.md" ]; then
+        # Fresh file: title + description, optional workflow block, memory sections.
+        {
+            echo "# CLAUDE.md"
+            echo ""
+            echo "This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository."
+            echo ""
+            if [ "$with_workflow" = "true" ]; then
+                if [ -f "$TEMPLATES_DIR/claude-md-workflow.md" ]; then
+                    cat "$TEMPLATES_DIR/claude-md-workflow.md"
+                    echo ""
+                else
+                    warn "workflow template missing ($TEMPLATES_DIR) — skipping workflow block"
+                fi
+            fi
+            _emit_memory_sections
+        } > CLAUDE.md
+        if [ "$with_workflow" = "true" ]; then
+            ok "Created CLAUDE.md with workflow guidance and memory sections"
+        else
+            ok "Created CLAUDE.md with memory sections"
+        fi
 
     elif grep -q "$MEMORY_MARKER" CLAUDE.md 2>/dev/null; then
         ok "CLAUDE.md already has memory sections (skipping)"
 
     else
-        # Existing CLAUDE.md without memory sections
-        if ! grep -q "$WORKFLOW_MARKER" CLAUDE.md 2>/dev/null; then
-            TMPFILE=$(mktemp)
-            cat > "$TMPFILE" << 'WORKFLOW_BLOCK'
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-
-WORKFLOW_BLOCK
-            cat CLAUDE.md >> "$TMPFILE"
-            mv "$TMPFILE" CLAUDE.md
-            ok "Prepended workflow guidance to CLAUDE.md"
+        # Existing CLAUDE.md without memory sections. Never prepend: appending
+        # keeps the file's opening bytes intact (no duplicate # CLAUDE.md title,
+        # no disruption of the user's own top content). With --with-workflow and
+        # no existing block, append the workflow block at the END too.
+        if [ "$with_workflow" = "true" ] \
+           && ! grep -q "## Workflow Orchestration" CLAUDE.md 2>/dev/null; then
+            if [ -f "$TEMPLATES_DIR/claude-md-workflow.md" ]; then
+                {
+                    echo ""
+                    cat "$TEMPLATES_DIR/claude-md-workflow.md"
+                } >> CLAUDE.md
+                ok "Appended workflow guidance to CLAUDE.md"
+            else
+                warn "workflow template missing ($TEMPLATES_DIR) — skipping workflow block"
+            fi
         fi
-
-        # Append memory sections at bottom
-        cat >> CLAUDE.md << 'MEMORY_SECTIONS'
-
-## Memory — Current State
-<!-- Updated by mimo checkpoint/save hooks -->
-Last session: (not yet set)
-Current focus: (not yet set)
-Blockers: None
-
-## Memory — Recent Sessions
-<!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
-
-## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
-MEMORY_SECTIONS
+        {
+            echo ""
+            _emit_memory_sections
+        } >> CLAUDE.md
         ok "Added memory sections to CLAUDE.md"
     fi
 
@@ -316,15 +273,17 @@ MEMORY_SECTIONS
     if [ -f "CLAUDE-FULL.md" ]; then
         ok "CLAUDE-FULL.md already exists (skipping)"
     else
-        cat > CLAUDE-FULL.md << 'ARCHIVE'
+        if [ -f "$TEMPLATES_DIR/CLAUDE-FULL.md" ]; then
+            cat "$TEMPLATES_DIR/CLAUDE-FULL.md" > CLAUDE-FULL.md
+        else
+            cat > CLAUDE-FULL.md << 'ARCHIVE'
 # Deep Memory Archive
 
-<!-- This file stores detailed session logs for long-term context preservation. -->
-<!-- CLAUDE.md references specific line ranges here (e.g., [CLAUDE-FULL.md L7-L14]). -->
-<!-- Append new sessions at the end. Do not delete old entries. -->
+<!-- Detailed session logs for long-term context preservation. -->
 
 ## Sessions
 ARCHIVE
+        fi
         ok "Created CLAUDE-FULL.md"
     fi
 
@@ -456,13 +415,20 @@ mimo v${MIMO_VERSION} — hook-based memory system for Claude Code
 Usage: mimo <command>
 
 Commands:
-  init        Re-initialize memory files in the current project
-  status      Show diagnostic information
+  init [opts]  Initialize memory files in the current project
+                 --with-workflow  include the Workflow Orchestration block
+                 --force-home     allow init inside \$HOME (normally refused)
+  status      Show diagnostic information (hooks, skills, config, sessions)
   cleanup     Remove stale session state, orphaned temp files, and old backups
   update      Check for and install the latest version
   version     Print version
   uninstall   Remove mimo from your system
   help        Show this help
+
+Configuration:
+  Edit ~/.claude/mimo.conf to change thresholds, auto-init mode, the workflow
+  block, backup retention, and stale-session timing. Do NOT edit installed
+  hooks — updates overwrite them. See 'mimo status' for active config.
 
 Slash commands (inside Claude Code):
   /save       Save a quick checkpoint (same as auto-checkpoint at 50%)
@@ -478,8 +444,10 @@ Learn more: https://github.com/ShivanDana/mimo
 HELP
 }
 
-case "${1:-help}" in
-    init)      cmd_init ;;
+CMD="${1:-help}"
+[ "$#" -gt 0 ] && shift
+case "$CMD" in
+    init)      cmd_init "$@" ;;
     status)    cmd_status ;;
     cleanup)   cmd_cleanup ;;
     update)    cmd_update ;;
@@ -487,7 +455,7 @@ case "${1:-help}" in
     uninstall) cmd_uninstall ;;
     help|--help|-h) cmd_help ;;
     *)
-        printf "${RED}[mimo]${NC} Unknown command: %s\n" "$1" >&2
+        printf "${RED}[mimo]${NC} Unknown command: %s\n" "$CMD" >&2
         cmd_help
         exit 1
         ;;

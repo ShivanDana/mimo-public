@@ -5,7 +5,13 @@ set -euo pipefail
 
 BACKUP_DIR="$HOME/.claude/backups"
 STATE_DIR="$HOME/.claude/memory-state"
+
+# ─── Config (defaults, then user overrides via ~/.claude/mimo.conf) ──────────
 BACKUP_RETENTION_DAYS=30
+MIMO_CONF="${MIMO_CONF:-$HOME/.claude/mimo.conf}"
+# shellcheck disable=SC1090
+[ -f "$MIMO_CONF" ] && . "$MIMO_CONF"
+
 mkdir -p "$BACKUP_DIR"
 
 # Read stdin JSON

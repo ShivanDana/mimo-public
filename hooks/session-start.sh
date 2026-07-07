@@ -8,6 +8,15 @@ BACKUP_DIR="$HOME/.claude/backups"
 
 mkdir -p "$STATE_DIR" "$BACKUP_DIR"
 
+# ─── Config (defaults, then user overrides) ──────────────────────────────────
+AUTO_INIT=git-only
+WORKFLOW_BLOCK=off
+STALE_MINUTES=120
+MIMO_CONF="${MIMO_CONF:-$HOME/.claude/mimo.conf}"
+# shellcheck disable=SC1090
+[ -f "$MIMO_CONF" ] && . "$MIMO_CONF"
+TEMPLATES_DIR="${MIMO_TEMPLATES_DIR:-$HOME/.claude/mimo-templates}"
+
 # Read stdin JSON
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
@@ -52,7 +61,7 @@ fi
 # tracked-files list must survive. So companions are deleted pairwise — only when
 # their session's json is already gone. Also reap orphaned jq temp files (crashed
 # mid-write) that the *.json glob never matched.
-find "$STATE_DIR" -name "*.json" -mmin +120 -delete 2>/dev/null || true
+find "$STATE_DIR" -name "*.json" -mmin +"$STALE_MINUTES" -delete 2>/dev/null || true
 for f in "$STATE_DIR"/*-changes.log "$STATE_DIR"/*-postcompact.flag; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
@@ -101,70 +110,13 @@ if [ -n "$INSTALLED_VERSION" ]; then
 fi
 
 # ─── Auto-init: create CLAUDE.md and CLAUDE-FULL.md if missing ───────────────
-WORKFLOW_MARKER="## Workflow Orchestration"
-MEMORY_MARKER="Memory — Current State"
-AUTO_INIT_MSG=""
-
-if [ ! -f "$CWD/CLAUDE.md" ]; then
-    # Create fresh: workflow block at top, memory sections at bottom
-    cat > "$CWD/CLAUDE.md" << 'MIMO_CLAUDE_MD'
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-
+# Emit the memory sections — from the installed template, with a built-in
+# fallback (hooks must never hard-fail if templates are missing).
+emit_memory_sections() {
+    if [ -f "$TEMPLATES_DIR/claude-md-memory-sections.md" ]; then
+        cat "$TEMPLATES_DIR/claude-md-memory-sections.md"
+    else
+        cat << 'MEMORY_SECTIONS'
 ## Memory — Current State
 <!-- Updated by mimo checkpoint/save hooks -->
 Last session: (not yet set)
@@ -173,115 +125,96 @@ Blockers: None
 
 ## Memory — Recent Sessions
 <!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
-
-## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
-MIMO_CLAUDE_MD
-    AUTO_INIT_MSG="Auto-initialized CLAUDE.md for this project."
-
-elif ! grep -q "$MEMORY_MARKER" "$CWD/CLAUDE.md" 2>/dev/null; then
-    # Existing CLAUDE.md but no memory sections — prepend workflow (if missing), append memory
-    if ! grep -q "$WORKFLOW_MARKER" "$CWD/CLAUDE.md" 2>/dev/null; then
-        TMPFILE=$(mktemp)
-        cat > "$TMPFILE" << 'WORKFLOW_BLOCK'
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-
-WORKFLOW_BLOCK
-        cat "$CWD/CLAUDE.md" >> "$TMPFILE"
-        mv "$TMPFILE" "$CWD/CLAUDE.md"
-    fi
-
-    # Append memory sections at bottom
-    cat >> "$CWD/CLAUDE.md" << 'MEMORY_SECTIONS'
-
-## Memory — Current State
-<!-- Updated by mimo checkpoint/save hooks -->
-Last session: (not yet set)
-Current focus: (not yet set)
-Blockers: None
-
-## Memory — Recent Sessions
-<!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
 
 ## Memory — Key Decisions
 <!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
 MEMORY_SECTIONS
-    AUTO_INIT_MSG="Auto-initialized memory sections in existing CLAUDE.md."
+    fi
+}
+
+# Decide whether to auto-init. The $HOME guard is absolute (a CLAUDE.md there
+# loads into every session = cross-project contamination), then AUTO_INIT gates.
+AUTO_INIT_MSG=""
+DO_AUTOINIT=false
+SKIP_REASON=""
+if [ "$CWD" = "$HOME" ]; then
+    SKIP_REASON="\$HOME directory"
+elif [ "$AUTO_INIT" = "never" ]; then
+    SKIP_REASON="AUTO_INIT=never"
+elif [ "$AUTO_INIT" = "always" ]; then
+    DO_AUTOINIT=true
+else
+    # git-only (default): auto-init only inside a git working tree (covers
+    # worktrees + subdirs). Any unrecognized value falls back to this safe mode.
+    if git -C "$CWD" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        DO_AUTOINIT=true
+    else
+        SKIP_REASON="not a git repo"
+    fi
 fi
 
-# CLAUDE-FULL.md
-if [ ! -f "$CWD/CLAUDE-FULL.md" ]; then
-    cat > "$CWD/CLAUDE-FULL.md" << 'ARCHIVE'
+if [ "$DO_AUTOINIT" = "true" ]; then
+    MEMORY_MARKER="Memory — Current State"
+
+    if [ ! -f "$CWD/CLAUDE.md" ]; then
+        # Fresh file: title + description, optional workflow block, memory sections.
+        {
+            echo "# CLAUDE.md"
+            echo ""
+            echo "This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository."
+            echo ""
+            if [ "$WORKFLOW_BLOCK" = "on" ]; then
+                if [ -f "$TEMPLATES_DIR/claude-md-workflow.md" ]; then
+                    cat "$TEMPLATES_DIR/claude-md-workflow.md"
+                    echo ""
+                fi
+            fi
+            emit_memory_sections
+        } > "$CWD/CLAUDE.md"
+        AUTO_INIT_MSG="Auto-initialized CLAUDE.md for this project."
+
+    elif ! grep -q "$MEMORY_MARKER" "$CWD/CLAUDE.md" 2>/dev/null; then
+        # Existing CLAUDE.md without memory sections. Never prepend: appending
+        # keeps the file's opening bytes intact (no duplicate # CLAUDE.md title,
+        # no disruption of the user's own top content). When WORKFLOW_BLOCK=on
+        # and the block is missing, append it at the END too.
+        if [ "$WORKFLOW_BLOCK" = "on" ] \
+           && ! grep -q "## Workflow Orchestration" "$CWD/CLAUDE.md" 2>/dev/null \
+           && [ -f "$TEMPLATES_DIR/claude-md-workflow.md" ]; then
+            {
+                echo ""
+                cat "$TEMPLATES_DIR/claude-md-workflow.md"
+            } >> "$CWD/CLAUDE.md"
+        fi
+        {
+            echo ""
+            emit_memory_sections
+        } >> "$CWD/CLAUDE.md"
+        AUTO_INIT_MSG="Auto-initialized memory sections in existing CLAUDE.md."
+    fi
+
+    # CLAUDE-FULL.md
+    if [ ! -f "$CWD/CLAUDE-FULL.md" ]; then
+        if [ -f "$TEMPLATES_DIR/CLAUDE-FULL.md" ]; then
+            cat "$TEMPLATES_DIR/CLAUDE-FULL.md" > "$CWD/CLAUDE-FULL.md"
+        else
+            cat > "$CWD/CLAUDE-FULL.md" << 'ARCHIVE'
 # Deep Memory Archive
 
-<!-- This file stores detailed session logs for long-term context preservation. -->
-<!-- CLAUDE.md references specific line ranges here (e.g., [CLAUDE-FULL.md L7-L14]). -->
-<!-- Append new sessions at the end. Do not delete old entries. -->
+<!-- Detailed session logs for long-term context preservation. -->
 
 ## Sessions
 ARCHIVE
-    if [ -z "$AUTO_INIT_MSG" ]; then
-        AUTO_INIT_MSG="Auto-initialized CLAUDE-FULL.md for this project."
-    else
-        AUTO_INIT_MSG="${AUTO_INIT_MSG} Created CLAUDE-FULL.md."
+        fi
+        if [ -z "$AUTO_INIT_MSG" ]; then
+            AUTO_INIT_MSG="Auto-initialized CLAUDE-FULL.md for this project."
+        else
+            AUTO_INIT_MSG="${AUTO_INIT_MSG} Created CLAUDE-FULL.md."
+        fi
     fi
+elif [ ! -f "$CWD/CLAUDE.md" ]; then
+    # Auto-init skipped and no memory here yet — point the user at manual init.
+    AUTO_INIT_MSG="mimo: auto-init skipped (${SKIP_REASON}). Run \`mimo init\` to set up memory here."
 fi
 
 # ─── Build context message ───────────────────────────────────────────────────
