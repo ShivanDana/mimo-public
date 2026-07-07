@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — StatusLine context detector + ANSI progress bar
+# mimo v__VERSION__ — StatusLine context detector + ANSI progress bar
 # Reads context usage from stdin JSON, writes threshold state, outputs colored bar
 set -euo pipefail
 

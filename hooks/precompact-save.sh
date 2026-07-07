@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — PreCompact hook: transcript backup + custom compact instructions
+# mimo v__VERSION__ — PreCompact hook: transcript backup + custom compact instructions
 # Copies transcript before compaction and outputs instructions for better compaction quality
 set -euo pipefail
 

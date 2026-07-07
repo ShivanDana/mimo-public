@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — SessionStart hook (startup/resume)
+# mimo v__VERSION__ — SessionStart hook (startup/resume)
 # Resets state for new session, auto-inits project, injects memory context into Claude
 set -euo pipefail
 

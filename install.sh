@@ -1,19 +1,12 @@
 #!/usr/bin/env bash
 # mimo installer — hook-based memory system for Claude Code
-# Usage: curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh | bash
+# Local mode:  git clone https://github.com/ShivanDana/mimo && bash mimo/install.sh
+# Remote mode: curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh | bash
+#
+# The installer copies mimo's source files (hooks/, skills/, mimo, uninstall.sh)
+# into ~/.claude and ~/.local/bin. The repo files are the single source of truth;
+# nothing is embedded here except the settings.json hook registration (config).
 set -euo pipefail
-
-MIMO_VERSION=$(curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/VERSION 2>/dev/null | tr -d '[:space:]')
-if [ -z "$MIMO_VERSION" ]; then
-    echo "\033[0;31m[mimo]\033[0m Could not fetch version. Check your network connection." >&2
-    exit 1
-fi
-HOOKS_DIR="$HOME/.claude/hooks"
-STATE_DIR="$HOME/.claude/memory-state"
-BACKUP_DIR="$HOME/.claude/backups"
-SETTINGS_FILE="$HOME/.claude/settings.json"
-SKILLS_DIR="$HOME/.claude/skills"
-CLI_DIR="$HOME/.local/bin"
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -26,6 +19,63 @@ info()  { printf "${GREEN}[mimo]${NC} %s\n" "$1"; }
 warn()  { printf "${YELLOW}[mimo]${NC} %s\n" "$1"; }
 error() { printf "${RED}[mimo]${NC} %s\n" "$1" >&2; }
 step()  { printf "${BOLD}[%s/6]${NC} %s\n" "$1" "$2"; }
+
+REPO_RAW="https://raw.githubusercontent.com/ShivanDana/mimo"
+REPO_ARCHIVE="https://github.com/ShivanDana/mimo/archive/refs"
+
+# ─── Locate source files: local clone or remote tarball ─────────────────────────
+# When run from a clone, $BASH_SOURCE points at this script; when piped via
+# curl | bash it is unset and $0 is "bash", so fall back and rely on the
+# hooks/ + VERSION existence check to distinguish the two modes.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")
+
+SRC_DIR=""
+if [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR/hooks" ] && [ -f "$SCRIPT_DIR/VERSION" ]; then
+    # ── Local mode: install from the clone, no network access ──
+    SRC_DIR="$SCRIPT_DIR"
+    MIMO_VERSION=$(tr -d '[:space:]' < "$SRC_DIR/VERSION")
+    if [ -z "$MIMO_VERSION" ]; then
+        error "Local VERSION file is empty."
+        exit 1
+    fi
+    info "Local install from $SRC_DIR (v${MIMO_VERSION})"
+else
+    # ── Remote mode: fetch VERSION, download + extract the release tarball ──
+    info "Fetching mimo from GitHub..."
+    MIMO_VERSION=$(curl -fsSL "$REPO_RAW/main/VERSION" 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$MIMO_VERSION" ]; then
+        error "Could not fetch version. Check your network connection."
+        exit 1
+    fi
+
+    TMP_SRC=$(mktemp -d)
+    trap 'rm -rf "$TMP_SRC"' EXIT
+    TARBALL="$TMP_SRC/mimo.tar.gz"
+
+    # Prefer the version tag; fall back to main if the tag does not exist yet.
+    if ! curl -fsSL "$REPO_ARCHIVE/tags/v${MIMO_VERSION}.tar.gz" -o "$TARBALL" 2>/dev/null; then
+        curl -fsSL "$REPO_ARCHIVE/heads/main.tar.gz" -o "$TARBALL" 2>/dev/null \
+            || { error "Could not download mimo source."; exit 1; }
+    fi
+
+    tar -xzf "$TARBALL" -C "$TMP_SRC" || { error "Could not extract mimo source."; exit 1; }
+
+    # The tarball unpacks to a single top-level dir (mimo-<version> or mimo-main).
+    SRC_DIR=$(find "$TMP_SRC" -maxdepth 1 -mindepth 1 -type d | head -1 || true)
+    if [ -z "$SRC_DIR" ] || [ ! -d "$SRC_DIR/hooks" ]; then
+        error "Downloaded source is missing hooks/."
+        exit 1
+    fi
+    info "Downloaded mimo v${MIMO_VERSION}"
+fi
+
+# ─── Install target paths ──────────────────────────────────────────────────────
+HOOKS_DIR="$HOME/.claude/hooks"
+STATE_DIR="$HOME/.claude/memory-state"
+BACKUP_DIR="$HOME/.claude/backups"
+SETTINGS_FILE="$HOME/.claude/settings.json"
+SKILLS_DIR="$HOME/.claude/skills"
+CLI_DIR="$HOME/.local/bin"
 
 # ─── Step 1: Preflight checks ────────────────────────────────────────────────
 step 1 "Preflight checks"
@@ -53,841 +103,42 @@ fi
 
 info "jq $(jq --version 2>&1 | tr -d 'jq-'), bash ${BASH_VERSION}, ~/.claude/ exists"
 
-# ─── Step 2: Write hook scripts ──────────────────────────────────────────────
+# ─── Step 2: Install hook scripts ────────────────────────────────────────────
 step 2 "Installing hook scripts"
 
 mkdir -p "$HOOKS_DIR" "$STATE_DIR" "$BACKUP_DIR"
 
-cat > "$HOOKS_DIR/statusline-memory.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — StatusLine context detector + ANSI progress bar
-# Reads context usage from stdin JSON, writes threshold state, outputs colored bar
-set -euo pipefail
-
-# Thresholds — lower for testing (e.g., CHECKPOINT=5, FULLSAVE=15)
-CHECKPOINT_THRESHOLD=50
-FULLSAVE_THRESHOLD=80
-
-STATE_DIR="$HOME/.claude/memory-state"
-BAR_WIDTH=20
-
-mkdir -p "$STATE_DIR"
-
-# Read full stdin JSON
-INPUT=$(cat)
-
-# Extract fields
-PERCENTAGE=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0')
-MODEL=$(echo "$INPUT" | jq -r '.model.display_name // "?"')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
-COST=$(echo "$INPUT" | jq -r '.cost.total_cost_usd // 0')
-
-# Per-session state file
-STATE_FILE="${MIMO_STATE_FILE:-}"
-if [ -z "$STATE_FILE" ]; then
-    [ -z "$SESSION_ID" ] && SESSION_ID="fallback-$$-$(date +%s)"
-    STATE_FILE="$STATE_DIR/${SESSION_ID}.json"
-fi
-
-# Round percentage to integer
-PCT_INT=$(printf "%.0f" "$PERCENTAGE")
-if [ "$PCT_INT" -gt 100 ]; then PCT_INT=100; fi
-if [ "$PCT_INT" -lt 0 ]; then PCT_INT=0; fi
-
-# Create state file if it doesn't exist yet
-if [ ! -f "$STATE_FILE" ]; then
-    jq -n --arg sid "$SESSION_ID" \
-        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false}' \
-        > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
-fi
-
-# Read current done flags
-CHECKPOINT_DONE=$(jq -r '.checkpoint_done // false' "$STATE_FILE" 2>/dev/null || echo "false")
-FULLSAVE_DONE=$(jq -r '.fullsave_done // false' "$STATE_FILE" 2>/dev/null || echo "false")
-
-# Determine threshold
-THRESHOLD="clean"
-if [ "$PCT_INT" -ge "$FULLSAVE_THRESHOLD" ] && [ "$FULLSAVE_DONE" = "false" ]; then
-    THRESHOLD="fullsave_needed"
-elif [ "$PCT_INT" -ge "$CHECKPOINT_THRESHOLD" ] && [ "$CHECKPOINT_DONE" = "false" ]; then
-    THRESHOLD="checkpoint_needed"
-fi
-
-# Update state file (atomic write with PID-based tmp)
-jq -n \
-    --arg sid "$SESSION_ID" \
-    --argjson pct "$PCT_INT" \
-    --arg threshold "$THRESHOLD" \
-    --argjson cp_done "$([ "$CHECKPOINT_DONE" = "true" ] && echo true || echo false)" \
-    --argjson fs_done "$([ "$FULLSAVE_DONE" = "true" ] && echo true || echo false)" \
-    '{session_id: $sid, percentage: $pct, threshold: $threshold, checkpoint_done: $cp_done, fullsave_done: $fs_done}' \
-    > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
-
-# Build progress bar
-FILLED=$(( PCT_INT * BAR_WIDTH / 100 ))
-if [ "$FILLED" -gt "$BAR_WIDTH" ]; then FILLED=$BAR_WIDTH; fi
-EMPTY=$(( BAR_WIDTH - FILLED ))
-
-BAR_FILLED=$(printf '%*s' "$FILLED" '' | tr ' ' '█')
-BAR_EMPTY=$(printf '%*s' "$EMPTY" '' | tr ' ' '░')
-BAR="${BAR_FILLED}${BAR_EMPTY}"
-
-# Choose ANSI color code
-if [ "$PCT_INT" -ge "$FULLSAVE_THRESHOLD" ]; then
-    CC="31"  # Red
-elif [ "$PCT_INT" -ge "$CHECKPOINT_THRESHOLD" ]; then
-    CC="33"  # Yellow
-else
-    CC="32"  # Green
-fi
-
-# Threshold indicator
-INDICATOR=""
-if [ "$THRESHOLD" = "fullsave_needed" ]; then
-    INDICATOR=" \033[31m!\033[0m"
-elif [ "$THRESHOLD" = "checkpoint_needed" ]; then
-    INDICATOR=" \033[33m*\033[0m"
-fi
-
-# Output ANSI statusline
-printf '\033[%sm%s %d%%\033[0m%b │ %s │ $%.2f' "$CC" "$BAR" "$PCT_INT" "$INDICATOR" "$MODEL" "$COST"
-HOOK_EOF
-
-cat > "$HOOKS_DIR/memory-gate.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — Stop hook memory gate
-# Blocks Claude from stopping when a memory save is needed
-# Exit 0 = allow stop, Exit 2 = block stop (stderr → Claude as instructions)
-set -euo pipefail
-
-STATE_DIR="$HOME/.claude/memory-state"
-
-# Read stdin JSON
-INPUT=$(cat)
-
-# Extract session_id for per-session state isolation
-STATE_FILE="${MIMO_STATE_FILE:-}"
-if [ -z "$STATE_FILE" ]; then
-    SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
-    [ -z "$SESSION_ID" ] && SESSION_ID="fallback-$$-$(date +%s)"
-    STATE_FILE="$STATE_DIR/${SESSION_ID}.json"
-fi
-
-# LOOP BREAKER: If stop_hook_active is true, Claude is already continuing
-# from a previous stop hook block. Allow it to stop now.
-STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
-if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
-    exit 0
-fi
-
-# If no state file, nothing to do
-if [ ! -f "$STATE_FILE" ]; then
-    exit 0
-fi
-
-THRESHOLD=$(jq -r '.threshold // "clean"' "$STATE_FILE" 2>/dev/null || echo "clean")
-
-# If no save needed, allow stop
-if [ "$THRESHOLD" = "clean" ]; then
-    exit 0
-fi
-
-# IDEMPOTENCY: Check if Claude already performed a save in this response
-LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // ""')
-if echo "$LAST_MSG" | grep -qiE '(checkpoint saved|memory saved)'; then
-    # Claude already saved — mark done and allow stop
-    if [ "$THRESHOLD" = "fullsave_needed" ]; then
-        jq '.fullsave_done = true | .checkpoint_done = true | .threshold = "clean"' "$STATE_FILE" \
-            > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
-    elif [ "$THRESHOLD" = "checkpoint_needed" ]; then
-        jq '.checkpoint_done = true | .threshold = "clean"' "$STATE_FILE" \
-            > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
-    fi
-    exit 0
-fi
-
-# Build tracked files list for save instructions
-CHANGES_LOG="${MIMO_CHANGES_LOG:-}"
-if [ -z "$CHANGES_LOG" ]; then
-    SID=$(basename "$STATE_FILE" .json)
-    CHANGES_LOG="$STATE_DIR/${SID}-changes.log"
-fi
-TRACKED_FILES=""
-if [ -f "$CHANGES_LOG" ]; then
-    TRACKED_FILES=$(sort -u "$CHANGES_LOG" 2>/dev/null | head -50)
-fi
-
-# FULL SAVE (80%+)
-if [ "$THRESHOLD" = "fullsave_needed" ]; then
-    # Mark as done before blocking (prevents re-trigger after Claude saves)
-    jq '.fullsave_done = true | .checkpoint_done = true | .threshold = "clean"' "$STATE_FILE" \
-        > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
-
-    {
-        cat <<'INSTRUCTIONS'
-[MIMO — FULL SAVE REQUIRED — Context at 80%+]
-
-Your context window is nearly full. Perform a complete memory save NOW before context is lost.
-
-1. Read CLAUDE.md and CLAUDE-FULL.md in the project root
-2. Update CLAUDE.md "Memory — Current State" section:
-   - Today's date
-   - Current task/focus and progress
-   - Any blockers, open issues, or important context
-3. Update CLAUDE.md "Memory — Recent Sessions" with a comprehensive entry for this session (keep max 7, drop oldest)
-4. Update CLAUDE.md "Memory — Key Decisions" with any decisions made this session
-5. Append a DETAILED session log to CLAUDE-FULL.md:
-   - Session number, date, full context of work
-   - ALL files changed with descriptions
-   - All decisions made with reasoning
-   - Current state and suggested next steps
-6. Update the line references [L##-L##] in CLAUDE.md to match the new CLAUDE-FULL.md entry
-
-After saving, say "memory saved" then IMMEDIATELY resume the task you were working on before this interruption. Pick up exactly where you left off — do not wait for the user to re-ask. If context is very full, suggest /compact but still resume working.
-INSTRUCTIONS
-        if [ -n "$TRACKED_FILES" ]; then
-            echo ""
-            echo "Files modified this session (tracked by mimo):"
-            echo "$TRACKED_FILES"
-        fi
-    } >&2
-    exit 2
-fi
-
-# CHECKPOINT (50%+)
-if [ "$THRESHOLD" = "checkpoint_needed" ]; then
-    # Mark as done before blocking
-    jq '.checkpoint_done = true | .threshold = "clean"' "$STATE_FILE" \
-        > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
-
-    {
-        cat <<'INSTRUCTIONS'
-[MIMO — CHECKPOINT NEEDED — Context at 50%+]
-
-Save a checkpoint of your current work to preserve context:
-
-1. Read CLAUDE.md and CLAUDE-FULL.md in the project root
-2. Update CLAUDE.md "Memory — Current State" section:
-   - Today's date
-   - What you're currently working on
-   - Any blockers or key context to preserve
-3. Update "Memory — Recent Sessions" — add/update this session entry (max 7)
-4. Append a brief session log to CLAUDE-FULL.md:
-   - Session number, date, work summary
-   - Key files changed
-   - State at checkpoint
-5. Update line references [L##-L##] in CLAUDE.md
-
-After saving, say "checkpoint saved" then IMMEDIATELY resume the task you were working on before this interruption. Pick up exactly where you left off — do not wait for the user to re-ask.
-INSTRUCTIONS
-        if [ -n "$TRACKED_FILES" ]; then
-            echo ""
-            echo "Files modified this session (tracked by mimo):"
-            echo "$TRACKED_FILES"
-        fi
-    } >&2
-    exit 2
-fi
-
-exit 0
-HOOK_EOF
-
-cat > "$HOOKS_DIR/precompact-save.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — PreCompact hook: transcript backup + custom compact instructions
-# Copies transcript before compaction and outputs instructions for better compaction quality
-set -euo pipefail
-
-BACKUP_DIR="$HOME/.claude/backups"
-mkdir -p "$BACKUP_DIR"
-
-# Read stdin JSON
-INPUT=$(cat)
-TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // ""')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
-TRIGGER=$(echo "$INPUT" | jq -r '.trigger // "unknown"')
-CUSTOM_INSTRUCTIONS=$(echo "$INPUT" | jq -r '.custom_instructions // ""')
-
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-
-if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-    # Copy full transcript
-    cp "$TRANSCRIPT" "$BACKUP_DIR/${TIMESTAMP}-precompact.jsonl"
-
-    # Generate human-readable summary
-    {
-        echo "# Pre-compaction backup"
-        echo "Date: $(date -Iseconds)"
-        echo "Session: $SESSION_ID"
-        echo "Trigger: $TRIGGER"
-        [ -n "$CUSTOM_INSTRUCTIONS" ] && echo "Custom instructions: $CUSTOM_INSTRUCTIONS"
-        echo ""
-        echo "## User messages (first 50 lines)"
-        # Best-effort extraction — transcript format may vary
-        jq -r '
-            select(.role == "user") |
-            .content //
-            (if .message then .message.content else empty end) |
-            if type == "string" then .
-            elif type == "array" then map(select(.type == "text") | .text) | join("\n")
-            else empty end
-        ' "$TRANSCRIPT" 2>/dev/null | head -50 || echo "(could not parse transcript)"
-    } > "$BACKUP_DIR/${TIMESTAMP}-precompact-summary.md"
-fi
-
-# Output custom compact instructions for better compaction quality
-jq -n '{hookSpecificOutput: {hookEventName: "PreCompact", additionalContext: "When compacting, preserve: (1) current task/focus and progress, (2) key decisions made this session, (3) files modified and their purposes, (4) any blockers or open issues. These are critical for mimo session continuity."}}'
-HOOK_EOF
-
-cat > "$HOOKS_DIR/session-start.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — SessionStart hook (startup/resume)
-# Resets state for new session, auto-inits project, injects memory context into Claude
-set -euo pipefail
-
-STATE_DIR="$HOME/.claude/memory-state"
-BACKUP_DIR="$HOME/.claude/backups"
-
-mkdir -p "$STATE_DIR" "$BACKUP_DIR"
-
-# Read stdin JSON
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
-CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
-
-# Per-session state file (isolates concurrent sessions)
-if [ -z "$SESSION_ID" ]; then SESSION_ID="fallback-$$-$(date +%s)"; fi
-STATE_FILE="$STATE_DIR/${SESSION_ID}.json"
-
-# Create state for new session (idempotent — preserves existing state on resume)
-if [ ! -f "$STATE_FILE" ]; then
-    jq -n --arg sid "$SESSION_ID" \
-        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false}' \
-        > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
-fi
-
-# Export env vars for other hooks via CLAUDE_ENV_FILE
-if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-    echo "export MIMO_SESSION_ID=\"$SESSION_ID\"" >> "$CLAUDE_ENV_FILE"
-    echo "export MIMO_STATE_FILE=\"$STATE_FILE\"" >> "$CLAUDE_ENV_FILE"
-    echo "export MIMO_CHANGES_LOG=\"$STATE_DIR/${SESSION_ID}-changes.log\"" >> "$CLAUDE_ENV_FILE"
-    echo "export MIMO_CWD=\"$CWD\"" >> "$CLAUDE_ENV_FILE"
-fi
-
-# Clean up orphan state files from crashed sessions (7-day threshold)
-find "$STATE_DIR" -name "*.json" -mtime +7 -delete 2>/dev/null || true
-
-# ─── Auto-update check (at most once per 24h, never blocks) ──────────────────
-UPDATE_CHECK_FILE="$STATE_DIR/mimo-update-check"
-INSTALLED_VERSION_FILE="$STATE_DIR/mimo-installed-version"
-INSTALLED_VERSION=$(cat "$INSTALLED_VERSION_FILE" 2>/dev/null || echo "")
-UPDATE_MSG=""
-
-if [ -n "$INSTALLED_VERSION" ]; then
-    SHOULD_CHECK=false
-    if [ ! -f "$UPDATE_CHECK_FILE" ]; then
-        SHOULD_CHECK=true
-    else
-        # Check if file is older than 24h (86400 seconds)
-        LAST_CHECK=$(stat -f %m "$UPDATE_CHECK_FILE" 2>/dev/null || stat -c %Y "$UPDATE_CHECK_FILE" 2>/dev/null || echo "0")
-        NOW=$(date +%s)
-        if [ $(( NOW - LAST_CHECK )) -gt 86400 ]; then
-            SHOULD_CHECK=true
-        fi
-    fi
-
-    if [ "$SHOULD_CHECK" = "true" ]; then
-        # Background fetch — never blocks session start
-        (
-            REMOTE=$(curl -fsSL --max-time 3 \
-                "https://raw.githubusercontent.com/ShivanDana/mimo/main/VERSION" 2>/dev/null | tr -d '[:space:]')
-            [ -n "$REMOTE" ] && echo "$REMOTE" > "$UPDATE_CHECK_FILE"
-        ) &
-    fi
-
-    # Read cached remote version from PREVIOUS successful check
-    REMOTE_VERSION=$(cat "$UPDATE_CHECK_FILE" 2>/dev/null || echo "")
-    if [ -n "$REMOTE_VERSION" ] && [ "$REMOTE_VERSION" != "$INSTALLED_VERSION" ]; then
-        UPDATE_MSG="Update available: mimo v${INSTALLED_VERSION} → v${REMOTE_VERSION}. Run: mimo update"
-    fi
-fi
-
-# ─── Auto-init: create CLAUDE.md and CLAUDE-FULL.md if missing ───────────────
-WORKFLOW_MARKER="## Workflow Orchestration"
-MEMORY_MARKER="Memory — Current State"
-AUTO_INIT_MSG=""
-
-if [ ! -f "$CWD/CLAUDE.md" ]; then
-    # Create fresh: workflow block at top, memory sections at bottom
-    cat > "$CWD/CLAUDE.md" << 'MIMO_CLAUDE_MD'
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-
-## Memory — Current State
-<!-- Updated by mimo checkpoint/save hooks -->
-Last session: (not yet set)
-Current focus: (not yet set)
-Blockers: None
-
-## Memory — Recent Sessions
-<!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
-
-## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
-MIMO_CLAUDE_MD
-    AUTO_INIT_MSG="Auto-initialized CLAUDE.md for this project."
-
-elif ! grep -q "$MEMORY_MARKER" "$CWD/CLAUDE.md" 2>/dev/null; then
-    # Existing CLAUDE.md but no memory sections — prepend workflow (if missing), append memory
-    if ! grep -q "$WORKFLOW_MARKER" "$CWD/CLAUDE.md" 2>/dev/null; then
-        TMPFILE=$(mktemp)
-        cat > "$TMPFILE" << 'WORKFLOW_BLOCK'
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-
-WORKFLOW_BLOCK
-        cat "$CWD/CLAUDE.md" >> "$TMPFILE"
-        mv "$TMPFILE" "$CWD/CLAUDE.md"
-    fi
-
-    # Append memory sections at bottom
-    cat >> "$CWD/CLAUDE.md" << 'MEMORY_SECTIONS'
-
-## Memory — Current State
-<!-- Updated by mimo checkpoint/save hooks -->
-Last session: (not yet set)
-Current focus: (not yet set)
-Blockers: None
-
-## Memory — Recent Sessions
-<!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
-
-## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
-MEMORY_SECTIONS
-    AUTO_INIT_MSG="Auto-initialized memory sections in existing CLAUDE.md."
-fi
-
-# CLAUDE-FULL.md
-if [ ! -f "$CWD/CLAUDE-FULL.md" ]; then
-    cat > "$CWD/CLAUDE-FULL.md" << 'ARCHIVE'
-# Deep Memory Archive
-
-<!-- This file stores detailed session logs for long-term context preservation. -->
-<!-- CLAUDE.md references specific line ranges here (e.g., [CLAUDE-FULL.md L7-L14]). -->
-<!-- Append new sessions at the end. Do not delete old entries. -->
-
-## Sessions
-ARCHIVE
-    if [ -z "$AUTO_INIT_MSG" ]; then
-        AUTO_INIT_MSG="Auto-initialized CLAUDE-FULL.md for this project."
-    else
-        AUTO_INIT_MSG="${AUTO_INIT_MSG} Created CLAUDE-FULL.md."
-    fi
-fi
-
-# ─── Build context message ───────────────────────────────────────────────────
-MSG="[MIMO ACTIVE] Memory hooks enabled. Checkpoints at 50% context, full save at 80%."
-
-if [ -n "$AUTO_INIT_MSG" ]; then
-    MSG="${MSG}\n${AUTO_INIT_MSG}"
-fi
-
-# Check for deep memory archive
-if [ -f "$CWD/CLAUDE-FULL.md" ]; then
-    LINES=$(wc -l < "$CWD/CLAUDE-FULL.md" | tr -d ' ')
-    MSG="${MSG}\nDeep memory archive: CLAUDE-FULL.md (${LINES} lines). Read specific line ranges as needed."
-fi
-
-# Include update notification if available
-if [ -n "$UPDATE_MSG" ]; then
-    MSG="${MSG}\n${UPDATE_MSG}"
-fi
-
-# Check for recent backups
-BACKUP_COUNT=$(find "$BACKUP_DIR" -name "*.jsonl" -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
-if [ "$BACKUP_COUNT" -gt "0" ]; then
-    LATEST_BACKUP=$(ls -1t "$BACKUP_DIR"/*.jsonl 2>/dev/null | head -1)
-    BACKUP_DATE=$(date -r "$LATEST_BACKUP" +%Y-%m-%d 2>/dev/null || echo "unknown")
-    MSG="${MSG}\nTranscript backups: ${BACKUP_COUNT} saved (latest: ${BACKUP_DATE})"
-fi
-
-# Output as structured JSON — additionalContext is injected into Claude's context
-jq -n --arg ctx "$(echo -e "$MSG")" \
-    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
-HOOK_EOF
-
-cat > "$HOOKS_DIR/session-start-compact.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — SessionStart hook (post-compact)
-# Lightweight context injection after compaction. Does NOT reset state flags.
-# Also writes post-compact flag for UserPromptSubmit hook to consume.
-set -euo pipefail
-
-STATE_DIR="$HOME/.claude/memory-state"
-
-# Read stdin JSON
-INPUT=$(cat)
-CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
-
-# Write post-compact flag for UserPromptSubmit hook
-if [ -n "$SESSION_ID" ]; then
-    touch "$STATE_DIR/${SESSION_ID}-postcompact.flag"
-fi
-
-MSG="[MIMO] Continuing after compaction. Read CLAUDE.md 'Memory' sections for prior context."
-
-if [ -f "$CWD/CLAUDE-FULL.md" ]; then
-    LINES=$(wc -l < "$CWD/CLAUDE-FULL.md" | tr -d ' ')
-    MSG="${MSG} CLAUDE-FULL.md available (${LINES} lines)."
-fi
-
-jq -n --arg ctx "$MSG" \
-    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
-HOOK_EOF
-
-cat > "$HOOKS_DIR/session-end-backup.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — SessionEnd transcript backup
-# Final safety net. Copies transcript on session exit. Runs async.
-set -euo pipefail
-
-BACKUP_DIR="$HOME/.claude/backups"
-STATE_DIR="$HOME/.claude/memory-state"
-mkdir -p "$BACKUP_DIR"
-
-# Read stdin JSON
-INPUT=$(cat)
-TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // ""')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
-
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-
-# Copy transcript
-if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-    cp "$TRANSCRIPT" "$BACKUP_DIR/${TIMESTAMP}-end.jsonl"
-fi
-
-# Clean up this session's state file, changes log, and flag file
-if [ -n "$SESSION_ID" ] && [ "$SESSION_ID" != "none" ]; then
-    rm -f "$STATE_DIR/${SESSION_ID}.json"
-    rm -f "$STATE_DIR/${SESSION_ID}-changes.log"
-    rm -f "$STATE_DIR/${SESSION_ID}-postcompact.flag"
-fi
-HOOK_EOF
-
-cat > "$HOOKS_DIR/subagent-context.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — SubagentStart hook: inject memory context into subagents
-# Provides subagents with session state and current focus from CLAUDE.md
-set -euo pipefail
-
-# Read stdin JSON
-INPUT=$(cat)
-CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
-
-# Get state file path from env or extract from input
-STATE_FILE="${MIMO_STATE_FILE:-}"
-if [ -z "$STATE_FILE" ]; then
-    SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
-    [ -z "$SESSION_ID" ] && exit 0
-    STATE_FILE="$HOME/.claude/memory-state/${SESSION_ID}.json"
-fi
-
-# Extract "Memory — Current State" section from CLAUDE.md (max 10 lines)
-MEMORY_STATE=""
-if [ -f "$CWD/CLAUDE.md" ]; then
-    MEMORY_STATE=$(sed -n '/^## Memory — Current State/,/^## /{/^## Memory — Current State/d;/^## /d;p;}' "$CWD/CLAUDE.md" | head -10)
-fi
-
-# Read context % from state file
-CTX_PCT=""
-if [ -f "$STATE_FILE" ]; then
-    CTX_PCT=$(jq -r '.percentage // ""' "$STATE_FILE" 2>/dev/null || echo "")
-fi
-
-# If no useful info, exit silently
-if [ -z "$MEMORY_STATE" ] && [ -z "$CTX_PCT" ]; then
-    exit 0
-fi
-
-# Build context message
-MSG="[MIMO — Subagent Context]"
-if [ -n "$CTX_PCT" ]; then
-    MSG="${MSG}\nParent session context usage: ${CTX_PCT}%"
-fi
-if [ -n "$MEMORY_STATE" ]; then
-    MSG="${MSG}\nMemory — Current State:\n${MEMORY_STATE}"
-fi
-
-jq -n --arg ctx "$(echo -e "$MSG")" \
-    '{hookSpecificOutput: {hookEventName: "SubagentStart", additionalContext: $ctx}}'
-HOOK_EOF
-
-cat > "$HOOKS_DIR/user-prompt-context.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — UserPromptSubmit hook: post-compact context injection
-# On the first user prompt after compaction, inject memory state as additionalContext
-# One-shot via flag file — zero overhead on normal prompts
-set -euo pipefail
-
-# Get session_id from env or extract from stdin
-INPUT=$(cat)
-SESSION_ID="${MIMO_SESSION_ID:-}"
-if [ -z "$SESSION_ID" ]; then
-    SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
-fi
-[ -z "$SESSION_ID" ] && exit 0
-
-# Check for post-compact flag — if not present, exit immediately (zero overhead)
-FLAG_FILE="$HOME/.claude/memory-state/${SESSION_ID}-postcompact.flag"
-if [ ! -f "$FLAG_FILE" ]; then
-    exit 0
-fi
-
-# Flag exists — this is the first prompt after compaction
-CWD="${MIMO_CWD:-}"
-if [ -z "$CWD" ]; then
-    CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
-fi
-
-# Extract memory sections from CLAUDE.md
-CURRENT_STATE=""
-KEY_DECISIONS=""
-if [ -f "$CWD/CLAUDE.md" ]; then
-    CURRENT_STATE=$(sed -n '/^## Memory — Current State/,/^## /{/^## Memory — Current State/d;/^## /d;p;}' "$CWD/CLAUDE.md" | head -15)
-    KEY_DECISIONS=$(sed -n '/^## Memory — Key Decisions/,/^## \|^$/{ /^## Memory — Key Decisions/d; /^## /d; p; }' "$CWD/CLAUDE.md" | head -15)
-fi
-
-# Get CLAUDE-FULL.md line count
-FULL_LINES=""
-if [ -f "$CWD/CLAUDE-FULL.md" ]; then
-    FULL_LINES=$(wc -l < "$CWD/CLAUDE-FULL.md" | tr -d ' ')
-fi
-
-# Build context message
-MSG="[MIMO — Post-Compact Context Recovery]"
-MSG="${MSG}\nYou just went through compaction. Here's your session state:"
-if [ -n "$CURRENT_STATE" ]; then
-    MSG="${MSG}\n\nMemory — Current State:\n${CURRENT_STATE}"
-fi
-if [ -n "$KEY_DECISIONS" ]; then
-    MSG="${MSG}\n\nMemory — Key Decisions:\n${KEY_DECISIONS}"
-fi
-if [ -n "$FULL_LINES" ]; then
-    MSG="${MSG}\n\nCLAUDE-FULL.md available (${FULL_LINES} lines) — read specific line ranges as needed."
-fi
-
-# Delete flag file (one-shot)
-rm -f "$FLAG_FILE"
-
-jq -n --arg ctx "$(echo -e "$MSG")" \
-    '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $ctx}}'
-HOOK_EOF
-
-cat > "$HOOKS_DIR/track-changes.sh" << 'HOOK_EOF'
-#!/usr/bin/env bash
-# mimo v__VERSION__ — PostToolUse hook: track file changes
-# After every successful Write or Edit, append file path to per-session changes log
-# Runs async — never blocks Claude
-set -euo pipefail
-
-# Read stdin JSON
-INPUT=$(cat)
-
-# Get changes log path from env or derive from session_id
-CHANGES_LOG="${MIMO_CHANGES_LOG:-}"
-if [ -z "$CHANGES_LOG" ]; then
-    SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
-    [ -z "$SESSION_ID" ] && exit 0
-    CHANGES_LOG="$HOME/.claude/memory-state/${SESSION_ID}-changes.log"
-fi
-
-# Extract file_path from tool_input
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // ""')
-[ -z "$FILE_PATH" ] && exit 0
-
-# Append to changes log (one path per line, deduped at read time)
-echo "$FILE_PATH" >> "$CHANGES_LOG"
-HOOK_EOF
-
-# Stamp version into all hooks
-sed -i'' -e "s/__VERSION__/${MIMO_VERSION}/g" "$HOOKS_DIR"/*.sh
-
-# Make all hooks executable
-chmod +x "$HOOKS_DIR"/*.sh
-
-info "Installed 9 hooks to $HOOKS_DIR"
+HOOK_COUNT=0
+for src in "$SRC_DIR"/hooks/*.sh; do
+    [ -f "$src" ] || continue
+    name=$(basename "$src")
+    dest="$HOOKS_DIR/$name"
+    cp "$src" "$dest" || { error "Failed to copy hook $name."; exit 1; }
+    # Stamp version via temp file (portable across GNU and BSD/macOS sed).
+    sed "s/__VERSION__/${MIMO_VERSION}/g" "$dest" > "${dest}.tmp" \
+        && mv "${dest}.tmp" "$dest" \
+        || { error "Failed to stamp version into $name."; rm -f "${dest}.tmp"; exit 1; }
+    chmod +x "$dest" || { error "Failed to make $name executable."; exit 1; }
+    HOOK_COUNT=$((HOOK_COUNT + 1))
+done
+
+info "Installed $HOOK_COUNT hooks to $HOOKS_DIR"
 
 # ─── Step 3: Install skills (slash commands) ────────────────────────────────
 step 3 "Installing skills (slash commands)"
 
-mkdir -p "$SKILLS_DIR/save" "$SKILLS_DIR/save-full"
+mkdir -p "$SKILLS_DIR"
 
-cat > "$SKILLS_DIR/save/SKILL.md" << 'SKILL_EOF'
----
-name: save
-description: "Save a mimo checkpoint — snapshot current work to CLAUDE.md and CLAUDE-FULL.md"
----
+SKILL_LIST=""
+for skdir in "$SRC_DIR"/skills/*/; do
+    [ -d "$skdir" ] || continue
+    skname=$(basename "$skdir")
+    mkdir -p "$SKILLS_DIR/$skname"
+    cp -R "$skdir." "$SKILLS_DIR/$skname/" || { error "Failed to copy skill /$skname."; exit 1; }
+    SKILL_LIST="$SKILL_LIST /$skname"
+done
 
-[MIMO — MANUAL CHECKPOINT]
-
-Save a checkpoint of your current work to preserve context:
-
-1. Read CLAUDE.md and CLAUDE-FULL.md in the project root
-2. Update CLAUDE.md "Memory — Current State" section:
-   - Today's date
-   - What you're currently working on
-   - Any blockers or key context to preserve
-3. Update "Memory — Recent Sessions" — add/update this session entry (max 7)
-4. Append a brief session log to CLAUDE-FULL.md:
-   - Session number, date, work summary
-   - Key files changed
-   - State at checkpoint
-5. Update line references [L##-L##] in CLAUDE.md
-
-After saving, say "checkpoint saved" then IMMEDIATELY resume the task you were working on before this interruption. Pick up exactly where you left off — do not wait for the user to re-ask.
-SKILL_EOF
-
-cat > "$SKILLS_DIR/save-full/SKILL.md" << 'SKILL_EOF'
----
-name: save-full
-description: "Perform a full mimo memory save — comprehensive session log to CLAUDE.md and CLAUDE-FULL.md"
----
-
-[MIMO — MANUAL FULL SAVE]
-
-Perform a complete memory save to preserve full session context.
-
-1. Read CLAUDE.md and CLAUDE-FULL.md in the project root
-2. Update CLAUDE.md "Memory — Current State" section:
-   - Today's date
-   - Current task/focus and progress
-   - Any blockers, open issues, or important context
-3. Update CLAUDE.md "Memory — Recent Sessions" with a comprehensive entry for this session (keep max 7, drop oldest)
-4. Update CLAUDE.md "Memory — Key Decisions" with any decisions made this session
-5. Append a DETAILED session log to CLAUDE-FULL.md:
-   - Session number, date, full context of work
-   - ALL files changed with descriptions
-   - All decisions made with reasoning
-   - Current state and suggested next steps
-6. Update the line references [L##-L##] in CLAUDE.md to match the new CLAUDE-FULL.md entry
-
-After saving, say "memory saved" then IMMEDIATELY resume the task you were working on before this interruption. Pick up exactly where you left off — do not wait for the user to re-ask. If context is very full, suggest /compact but still resume working.
-SKILL_EOF
-
-info "Installed skills: /save, /save-full"
+info "Installed skills:$SKILL_LIST"
 
 # ─── Step 4: Merge settings.json ─────────────────────────────────────────────
 step 4 "Configuring settings.json"
@@ -1007,491 +258,22 @@ else
     fi
 fi
 
-# ─── Step 5: Install mimo CLI ────────────────────────────────────────────────
+# ─── Step 5: Install mimo CLI + uninstaller ──────────────────────────────────
 step 5 "Installing mimo CLI"
 
 mkdir -p "$CLI_DIR"
 
-cat > "$CLI_DIR/mimo" << 'CLI_EOF'
-#!/usr/bin/env bash
-# mimo — CLI for the mimo memory system for Claude Code
-set -euo pipefail
-
-MIMO_VERSION="__VERSION__"
-HOOKS_DIR="$HOME/.claude/hooks"
-STATE_DIR="$HOME/.claude/memory-state"
-SETTINGS_FILE="$HOME/.claude/settings.json"
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-ok()    { printf "  ${GREEN}[ok]${NC} %s\n" "$1"; }
-fail()  { printf "  ${RED}[!!]${NC} %s\n" "$1"; }
-dim()   { printf "  ${YELLOW}[-]${NC}  %s\n" "$1"; }
-info()  { printf "${GREEN}[mimo]${NC} %s\n" "$1"; }
-error() { printf "${RED}[mimo]${NC} %s\n" "$1" >&2; }
-
-cmd_version() {
-    echo "mimo v${MIMO_VERSION}"
-}
-
-cmd_status() {
-    echo ""
-    printf "${BOLD}mimo status${NC}\n"
-    echo ""
-
-    # Hook scripts
-    printf "${BOLD}Hook scripts:${NC}\n"
-    for hook in statusline-memory.sh memory-gate.sh precompact-save.sh session-start.sh session-start-compact.sh session-end-backup.sh subagent-context.sh user-prompt-context.sh track-changes.sh; do
-        if [ -x "$HOOKS_DIR/$hook" ]; then
-            ok "$hook"
-        else
-            fail "$hook (missing or not executable)"
-        fi
-    done
-
-    echo ""
-    printf "${BOLD}Settings:${NC}\n"
-    if [ -f "$SETTINGS_FILE" ]; then
-        HOOK_COUNT=$(jq '[.hooks[][]?.hooks[]? | select(.command // "" | contains("/.claude/hooks/"))] | length' "$SETTINGS_FILE" 2>/dev/null || echo "0")
-        if [ "$HOOK_COUNT" -gt 0 ]; then
-            ok "Hooks registered in settings.json ($HOOK_COUNT entries)"
-        else
-            fail "No mimo hooks found in settings.json"
-        fi
-
-        SL=$(jq -r '.statusLine.command // ""' "$SETTINGS_FILE" 2>/dev/null || echo "")
-        if echo "$SL" | grep -q 'statusline-memory'; then
-            ok "StatusLine configured"
-        else
-            fail "StatusLine not configured"
-        fi
-    else
-        fail "settings.json not found"
-    fi
-
-    echo ""
-    printf "${BOLD}Dependencies:${NC}\n"
-    if command -v jq &>/dev/null; then
-        ok "jq $(jq --version 2>&1 | tr -d 'jq-')"
-    else
-        fail "jq not installed"
-    fi
-    ok "bash ${BASH_VERSION}"
-
-    echo ""
-    printf "${BOLD}Skills:${NC}\n"
-    for skill in save save-full; do
-        if [ -f "$HOME/.claude/skills/$skill/SKILL.md" ]; then
-            ok "/$skill"
-        else
-            fail "/$skill (not installed)"
-        fi
-    done
-
-    echo ""
-    printf "${BOLD}Active sessions:${NC}\n"
-    SESSION_COUNT=0
-    if [ -d "$STATE_DIR" ]; then
-        for sf in "$STATE_DIR"/*.json; do
-            [ -f "$sf" ] || continue
-            SESSION_COUNT=$((SESSION_COUNT + 1))
-            SID=$(jq -r '.session_id // "?"' "$sf" 2>/dev/null || echo "?")
-            PCT=$(jq -r '.percentage // 0' "$sf" 2>/dev/null || echo "0")
-            THRESHOLD=$(jq -r '.threshold // "clean"' "$sf" 2>/dev/null || echo "clean")
-            ok "${SID}: ${PCT}%, threshold: ${THRESHOLD}"
-        done
-    fi
-    if [ "$SESSION_COUNT" -eq 0 ]; then
-        dim "No active sessions"
-    fi
-
-    echo ""
-    printf "${BOLD}Current project:${NC}\n"
-    if [ -f "CLAUDE.md" ]; then
-        if grep -q 'Memory — Current State' CLAUDE.md 2>/dev/null; then
-            ok "CLAUDE.md has memory sections"
-        else
-            dim "CLAUDE.md exists but no memory sections (run: mimo init)"
-        fi
-    else
-        dim "No CLAUDE.md in current directory"
-    fi
-    if [ -f "CLAUDE-FULL.md" ]; then
-        LINES=$(wc -l < "CLAUDE-FULL.md" | tr -d ' ')
-        ok "CLAUDE-FULL.md (${LINES} lines)"
-    else
-        dim "No CLAUDE-FULL.md (run: mimo init)"
-    fi
-
-    echo ""
-}
-
-cmd_init() {
-    echo ""
-    printf "${BOLD}mimo init${NC} — setting up memory for this project\n"
-    echo ""
-
-    WORKFLOW_MARKER="## Workflow Orchestration"
-    MEMORY_MARKER="Memory — Current State"
-
-    # CLAUDE.md
-    if [ ! -f "CLAUDE.md" ]; then
-        # Create fresh: workflow block at top, memory sections at bottom
-        cat > CLAUDE.md << 'MIMO_CLAUDE_MD'
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-
-## Memory — Current State
-<!-- Updated by mimo checkpoint/save hooks -->
-Last session: (not yet set)
-Current focus: (not yet set)
-Blockers: None
-
-## Memory — Recent Sessions
-<!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
-
-## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
-MIMO_CLAUDE_MD
-        ok "Created CLAUDE.md with workflow guidance and memory sections"
-
-    elif grep -q "$MEMORY_MARKER" CLAUDE.md 2>/dev/null; then
-        ok "CLAUDE.md already has memory sections (skipping)"
-
-    else
-        # Existing CLAUDE.md without memory sections
-        if ! grep -q "$WORKFLOW_MARKER" CLAUDE.md 2>/dev/null; then
-            TMPFILE=$(mktemp)
-            cat > "$TMPFILE" << 'WORKFLOW_BLOCK'
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
-
-## Core Principles
-
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
-
-WORKFLOW_BLOCK
-            cat CLAUDE.md >> "$TMPFILE"
-            mv "$TMPFILE" CLAUDE.md
-            ok "Prepended workflow guidance to CLAUDE.md"
-        fi
-
-        # Append memory sections at bottom
-        cat >> CLAUDE.md << 'MEMORY_SECTIONS'
-
-## Memory — Current State
-<!-- Updated by mimo checkpoint/save hooks -->
-Last session: (not yet set)
-Current focus: (not yet set)
-Blockers: None
-
-## Memory — Recent Sessions
-<!-- Rolling list, max 7 entries. Oldest dropped. -->
-<!-- Each entry has a line reference to CLAUDE-FULL.md -->
-
-## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md line ref for reasoning -->
-MEMORY_SECTIONS
-        ok "Added memory sections to CLAUDE.md"
-    fi
-
-    # CLAUDE-FULL.md
-    if [ -f "CLAUDE-FULL.md" ]; then
-        ok "CLAUDE-FULL.md already exists (skipping)"
-    else
-        cat > CLAUDE-FULL.md << 'ARCHIVE'
-# Deep Memory Archive
-
-<!-- This file stores detailed session logs for long-term context preservation. -->
-<!-- CLAUDE.md references specific line ranges here (e.g., [CLAUDE-FULL.md L7-L14]). -->
-<!-- Append new sessions at the end. Do not delete old entries. -->
-
-## Sessions
-ARCHIVE
-        ok "Created CLAUDE-FULL.md"
-    fi
-
-    echo ""
-    printf "${GREEN}[mimo]${NC} Project initialized. Start a Claude Code session to begin building memory.\n"
-    echo ""
-}
-
-cmd_update() {
-    echo ""
-    printf "${BOLD}mimo update${NC}\n"
-    echo ""
-
-    REMOTE_VERSION=$(curl -fsSL --max-time 5 \
-        "https://raw.githubusercontent.com/ShivanDana/mimo/main/VERSION" 2>/dev/null | tr -d '[:space:]')
-    if [ -z "$REMOTE_VERSION" ]; then
-        error "Could not fetch remote version. Check your network connection."
-        exit 1
-    fi
-
-    INSTALLED_VERSION=$(cat "$STATE_DIR/mimo-installed-version" 2>/dev/null || echo "unknown")
-
-    if [ "$REMOTE_VERSION" = "$INSTALLED_VERSION" ]; then
-        info "Already up to date (v${INSTALLED_VERSION})"
-        exit 0
-    fi
-
-    info "Updating mimo v${INSTALLED_VERSION} → v${REMOTE_VERSION}..."
-    echo ""
-    curl -fsSL "https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh" | bash
-}
-
-cmd_uninstall() {
-    if [ -f "$HOME/.local/bin/mimo-uninstall" ]; then
-        exec bash "$HOME/.local/bin/mimo-uninstall"
-    else
-        printf "${RED}[mimo]${NC} mimo-uninstall not found. Run manually:\n" >&2
-        echo "  curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/uninstall.sh | bash"
-        exit 1
-    fi
-}
-
-cmd_help() {
-    cat << HELP
-mimo v${MIMO_VERSION} — hook-based memory system for Claude Code
-
-Usage: mimo <command>
-
-Commands:
-  init        Re-initialize memory files in the current project
-  status      Show diagnostic information
-  update      Check for and install the latest version
-  version     Print version
-  uninstall   Remove mimo from your system
-  help        Show this help
-
-Slash commands (inside Claude Code):
-  /save       Save a quick checkpoint (same as auto-checkpoint at 50%)
-  /save-full  Full memory save (same as auto-save at 80%)
-  /pcompact   Generate context-preserving /compact instructions
-
-Getting started:
-  1. mimo is already installed (hooks + settings configured)
-  2. Start a Claude Code session — mimo auto-initializes your project
-  3. Use 'mimo init' to manually reset memory files if needed
-
-Learn more: https://github.com/ShivanDana/mimo
-HELP
-}
-
-case "${1:-help}" in
-    init)      cmd_init ;;
-    status)    cmd_status ;;
-    update)    cmd_update ;;
-    version)   cmd_version ;;
-    uninstall) cmd_uninstall ;;
-    help|--help|-h) cmd_help ;;
-    *)
-        printf "${RED}[mimo]${NC} Unknown command: %s\n" "$1" >&2
-        cmd_help
-        exit 1
-        ;;
-esac
-CLI_EOF
-
-# Stamp version
-sed -i'' -e "s/__VERSION__/${MIMO_VERSION}/g" "$CLI_DIR/mimo"
-chmod +x "$CLI_DIR/mimo"
-
-# Write the uninstall helper
-cat > "$CLI_DIR/mimo-uninstall" << 'UNINST_EOF'
-#!/usr/bin/env bash
-# mimo uninstaller — removes hooks, settings entries, and CLI
-set -euo pipefail
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-info()  { printf "${GREEN}[mimo]${NC} %s\n" "$1"; }
-warn()  { printf "${YELLOW}[mimo]${NC} %s\n" "$1"; }
-
-HOOKS_DIR="$HOME/.claude/hooks"
-SETTINGS_FILE="$HOME/.claude/settings.json"
-
-echo ""
-printf "${BOLD}Uninstalling mimo${NC}\n"
-echo ""
-
-# 1. Remove hook scripts
-for hook in statusline-memory.sh memory-gate.sh precompact-save.sh session-start.sh session-start-compact.sh session-end-backup.sh subagent-context.sh user-prompt-context.sh track-changes.sh; do
-    if [ -f "$HOOKS_DIR/$hook" ]; then
-        rm "$HOOKS_DIR/$hook"
-        info "Removed $hook"
-    fi
-done
-
-# 1b. Remove skill files
-for skill in save save-full; do
-    if [ -d "$HOME/.claude/skills/$skill" ]; then
-        rm -rf "$HOME/.claude/skills/$skill"
-        info "Removed skill: /$skill"
-    fi
-done
-
-# 2. Remove mimo entries from settings.json
-if [ -f "$SETTINGS_FILE" ]; then
-    cp "$SETTINGS_FILE" "${SETTINGS_FILE}.mimo-uninstall-backup"
-
-    jq '
-        def remove_mimo: [.[]? | select((.hooks // []) | any(.command // "" | contains("/.claude/hooks/")) | not)];
-
-        # Remove mimo hooks from each event type
-        (if .hooks then
-            .hooks |= with_entries(
-                .value |= remove_mimo |
-                select(.value | length > 0)
-            )
-        else . end) |
-
-        # Remove statusLine if it is mimo
-        (if (.statusLine.command // "" | contains("/.claude/hooks/")) then del(.statusLine) else . end) |
-
-        # Clean up empty hooks object
-        (if (.hooks | length) == 0 then del(.hooks) else . end)
-    ' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
-
-    if jq empty "${SETTINGS_FILE}.tmp" 2>/dev/null; then
-        mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-        info "Removed mimo entries from settings.json"
-    else
-        warn "Could not update settings.json (backup at settings.json.mimo-uninstall-backup)"
-        rm -f "${SETTINGS_FILE}.tmp"
-    fi
-fi
-
-# 3. Remove CLI
-rm -f "$HOME/.local/bin/mimo"
-rm -f "$HOME/.local/bin/mimo-uninstall"
-info "Removed mimo CLI"
-
-# 4. Preserve user data
-echo ""
-warn "Preserved (your data):"
-echo "  ~/.claude/backups/       — transcript backups"
-echo "  ~/.claude/memory-state/  — session state"
-echo "  Project CLAUDE.md and CLAUDE-FULL.md files"
-echo ""
-info "mimo has been uninstalled. Your memory data is intact."
-echo ""
-UNINST_EOF
-
-chmod +x "$CLI_DIR/mimo-uninstall"
+cp "$SRC_DIR/mimo" "$CLI_DIR/mimo" || { error "Failed to copy mimo CLI."; exit 1; }
+# Stamp version via temp file (portable across GNU and BSD/macOS sed).
+sed "s/__VERSION__/${MIMO_VERSION}/g" "$CLI_DIR/mimo" > "$CLI_DIR/mimo.tmp" \
+    && mv "$CLI_DIR/mimo.tmp" "$CLI_DIR/mimo" \
+    || { error "Failed to stamp version into mimo CLI."; rm -f "$CLI_DIR/mimo.tmp"; exit 1; }
+chmod +x "$CLI_DIR/mimo" || { error "Failed to make mimo CLI executable."; exit 1; }
+
+cp "$SRC_DIR/uninstall.sh" "$CLI_DIR/mimo-uninstall" \
+    || { error "Failed to copy uninstaller."; exit 1; }
+chmod +x "$CLI_DIR/mimo-uninstall" \
+    || { error "Failed to make uninstaller executable."; exit 1; }
 
 info "Installed mimo CLI to $CLI_DIR/mimo"
 
@@ -1507,6 +289,11 @@ fi
 
 # ─── Step 6: Done ────────────────────────────────────────────────────────────
 step 6 "Installation complete"
+
+# Record installed version for update checks
+mkdir -p "$STATE_DIR"
+echo "$MIMO_VERSION" > "$STATE_DIR/mimo-installed-version" \
+    || { error "Failed to record installed version."; exit 1; }
 
 echo ""
 printf "${BOLD}${GREEN}mimo v${MIMO_VERSION} installed successfully!${NC}\n"
@@ -1525,6 +312,3 @@ echo "Slash commands (inside Claude Code):"
 echo "  /save           — quick checkpoint"
 echo "  /save-full      — full memory save"
 echo ""
-
-# Record installed version for update checks
-echo "$MIMO_VERSION" > "$STATE_DIR/mimo-installed-version"

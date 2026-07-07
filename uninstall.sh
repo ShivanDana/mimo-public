@@ -37,7 +37,7 @@ else
 fi
 
 # ─── 1b. Remove skill files ────────────────────────────────────────────────
-for skill in save save-full; do
+for skill in save save-full pcompact; do
     if [ -d "$HOME/.claude/skills/$skill" ]; then
         rm -rf "$HOME/.claude/skills/$skill"
         info "Removed skill: /$skill"

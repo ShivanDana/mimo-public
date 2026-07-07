@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — SessionStart hook (post-compact)
+# mimo v__VERSION__ — SessionStart hook (post-compact)
 # Lightweight context injection after compaction. Does NOT reset state flags.
 # Also writes post-compact flag for UserPromptSubmit hook to consume.
 set -euo pipefail

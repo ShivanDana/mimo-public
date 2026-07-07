@@ -52,6 +52,14 @@ flowchart LR
 curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh | bash
 ```
 
+Or install from a local clone (no network required):
+
+```bash
+git clone https://github.com/ShivanDana/mimo && bash mimo/install.sh
+```
+
+The installer copies mimo's source files (hooks, skills, CLI, uninstaller) into `~/.claude` and `~/.local/bin` — the repo files are the single source of truth. When piped from `curl`, it downloads the matching release tarball first; from a clone, it installs those local files directly.
+
 **Requirements:** `jq`, `bash` 3.2+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed
 
 Verify the installation:

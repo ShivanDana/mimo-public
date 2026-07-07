@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — Stop hook memory gate
+# mimo v__VERSION__ — Stop hook memory gate
 # Blocks Claude from stopping when a memory save is needed
 # Exit 0 = allow stop, Exit 2 = block stop (stderr → Claude as instructions)
 set -euo pipefail

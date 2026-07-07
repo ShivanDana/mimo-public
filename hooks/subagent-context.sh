@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — SubagentStart hook: inject memory context into subagents
+# mimo v__VERSION__ — SubagentStart hook: inject memory context into subagents
 # Provides subagents with session state and current focus from CLAUDE.md
 set -euo pipefail
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — SessionEnd transcript backup
+# mimo v__VERSION__ — SessionEnd transcript backup
 # Final safety net. Copies transcript on session exit. Runs async.
 set -euo pipefail
 

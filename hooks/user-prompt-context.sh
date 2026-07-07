@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — UserPromptSubmit hook: post-compact context injection
+# mimo v__VERSION__ — UserPromptSubmit hook: post-compact context injection
 # On the first user prompt after compaction, inject memory state as additionalContext
 # One-shot via flag file — zero overhead on normal prompts
 set -euo pipefail

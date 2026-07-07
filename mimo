@@ -2,7 +2,16 @@
 # mimo — CLI for the mimo memory system for Claude Code
 set -euo pipefail
 
-MIMO_VERSION=$(cat "$(dirname "$0")/VERSION" 2>/dev/null || echo "dev")
+# Version is stamped by the installer (sed replaces every __VERSION__). When run
+# from a dev clone the placeholder is still present, so fall back to the local
+# VERSION file, then to "dev". The sentinel is reconstructed from two pieces so
+# the installer's global sed does not rewrite this guard as well.
+MIMO_VERSION="__VERSION__"
+_mimo_placeholder="__VER""SION__"
+if [ "$MIMO_VERSION" = "$_mimo_placeholder" ]; then
+    MIMO_VERSION=$(cat "$(dirname "$0")/VERSION" 2>/dev/null || echo "dev")
+fi
+unset _mimo_placeholder
 HOOKS_DIR="$HOME/.claude/hooks"
 STATE_DIR="$HOME/.claude/memory-state"
 SETTINGS_FILE="$HOME/.claude/settings.json"
@@ -331,7 +340,21 @@ cmd_update() {
 
     info "Updating mimo v${INSTALLED_VERSION} → v${REMOTE_VERSION}..."
     echo ""
-    curl -fsSL "https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh" | bash
+
+    # Run the installer pinned to the target version. Fall back to main if the
+    # version tag does not exist yet (tags may lag the VERSION file).
+    PINNED_URL="https://raw.githubusercontent.com/ShivanDana/mimo/v${REMOTE_VERSION}/install.sh"
+    MAIN_URL="https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh"
+
+    INSTALLER=$(curl -fsSL "$PINNED_URL" 2>/dev/null || echo "")
+    if [ -z "$INSTALLER" ]; then
+        INSTALLER=$(curl -fsSL "$MAIN_URL" 2>/dev/null || echo "")
+    fi
+    if [ -z "$INSTALLER" ]; then
+        error "Could not download the installer. Check your network connection."
+        exit 1
+    fi
+    echo "$INSTALLER" | bash
 }
 
 cmd_uninstall() {

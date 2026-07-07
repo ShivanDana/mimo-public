@@ -2,6 +2,18 @@
 
 All notable changes to mimo will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **File-based installer — single source of truth**: `install.sh` no longer embeds copies of the hooks, skills, `mimo` CLI, and uninstaller as heredocs (was ~1,530 lines, now ~310). It installs *from* the repo's source files, so each file exists exactly once. Two modes: **local** (running from a clone installs the local `hooks/`, `skills/`, `mimo`, and `uninstall.sh` with no network) and **remote** (`curl | bash` downloads the release tarball, falling back from the version tag to `main`).
+- **Version stamping via `__VERSION__` placeholders**: source hooks and the `mimo` CLI carry a `__VERSION__` placeholder that the installer replaces with the release version. Run from a dev clone, the CLI falls back to the local `VERSION` file, then to `dev`.
+- **Pinned self-update**: `mimo update` now runs the installer pinned to the target version (`.../v${VERSION}/install.sh`), falling back to `main` if the tag does not exist yet.
+- **Generic skill install/uninstall**: the installer copies every `skills/*/` directory (no hardcoded names), so new skills need no installer changes.
+
+### Fixed
+- **Installer error checking** (audit #6): every `cp`, `chmod +x`, and version-stamp `sed` now aborts with a clear message on failure instead of continuing silently.
+- **Portable in-place edits**: version stamping uses a temp-file rewrite instead of `sed -i''`, which left `*.sh-e` backup files on BSD/macOS sed.
+
 ## [1.5.0] - 2026-03-08
 
 ### Added

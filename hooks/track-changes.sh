@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mimo — PostToolUse hook: track file changes
+# mimo v__VERSION__ — PostToolUse hook: track file changes
 # After every successful Write or Edit, append file path to per-session changes log
 # Runs async — never blocks Claude
 set -euo pipefail
