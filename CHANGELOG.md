@@ -13,13 +13,29 @@ All notable changes to mimo will be documented in this file.
 ### Fixed
 - **Installer error checking** (audit #6): every `cp`, `chmod +x`, and version-stamp `sed` now aborts with a clear message on failure instead of continuing silently.
 - **Portable in-place edits**: version stamping uses a temp-file rewrite instead of `sed -i''`, which left `*.sh-e` backup files on BSD/macOS sed.
+- **Validated atomic state writes** (audit #1): every jq state-file rewrite (`statusline-memory.sh`, `memory-gate.sh`, `session-start.sh`) now goes through a `write_state` helper that writes to a temp file, verifies it is non-empty, and only then `mv`s it over the real state — a failed or empty jq leaves the previous state intact instead of clobbering it with garbage. The old fragile `.$$.tmp` pattern is gone.
+- **track-changes.sh missing directory** (audit #2): `track-changes.sh` now `mkdir -p`s the state dir before appending, so a fast first edit (PostToolUse firing before SessionStart) no longer fails.
+- **statusline numeric guard** (audit #3): `statusline-memory.sh` sanitizes the context percentage — a missing `.context_window` (jq emits `null`) or any non-numeric value now falls back to `0` instead of crashing `printf "%.0f"`.
+- **Uninstall cleanup** (audit #5): `uninstall.sh` now removes the internal `mimo-installed-version` and `mimo-update-check` files.
+- **Sanitized precompact session id**: `precompact-save.sh` now sanitizes `session_id` with `tr -cd 'a-zA-Z0-9-'` like the other hooks.
+
+### Added
+- **Smart stale-session detection**: the StatusLine hook is a heartbeat — an active session rewrites its state file every few seconds. `mimo status` now marks a session `stale (last seen Xh ago)` when its state file has no heartbeat in over 2 hours, instead of reporting every orphan as active.
+- **`mimo cleanup` command**: removes stale session state triples (state + changes log + post-compact flag) with no heartbeat in 2h, reaps orphaned jq temp files older than 60 min, and prunes transcript backups older than 30 days — reporting a count per category.
+- **Backup retention**: `session-end-backup.sh` prunes `~/.claude/backups/*.jsonl` and `*-precompact-summary.md` older than 30 days (`BACKUP_RETENTION_DAYS`) after each backup.
+- **Identifiable backup filenames**: transcript backups now embed the first 8 chars of the session id — `${TIMESTAMP}-${SID}-end.jsonl` / `-precompact.jsonl` (falling back to `unknown`).
+- **NotebookEdit change tracking**: the PostToolUse matcher is now `Write|Edit|NotebookEdit` and `track-changes.sh` reads `.tool_input.notebook_path` as well as `.file_path`.
+- **`/pcompact` skill shipped with mimo**: the `pcompact` skill now lives in the repo (`skills/pcompact/`) and installs generically alongside `save`/`save-full`; `mimo status` lists it.
+
+### Changed
+- **Heartbeat-based orphan cleanup**: `session-start.sh` replaces the blunt 7-day `*.json` cleanup with a 2-hour heartbeat cleanup of state files, changes logs, and post-compact flags, plus a 60-minute cleanup of orphaned jq temp files (which the old `*.json` glob never matched).
 
 ## [1.5.0] - 2026-03-08
 
 ### Added
-- **Auto-update notifications**: Session start checks for new versions once per 24 hours (background fetch, never blocks). Notifies via additionalContext when an update is available
-- **`mimo update` CLI command**: Check for and install the latest version with a single command. Re-runs install.sh from GitHub
-- **Installed version tracking**: `~/.claude/memory-state/mimo-installed-version` records the installed version for fast update checks
+- **Auto-update notifications**: The `session-start.sh` hook checks GitHub for a newer version at most once every 24 hours. The check is throttled by the mtime of `~/.claude/memory-state/mimo-update-check` (a 24h TTL cache), and the actual version fetch runs as a backgrounded `curl` subshell so it never blocks session start. On the *next* session start after a successful fetch, the cached remote version is compared against the installed version and, if newer, an "Update available" line is injected via the SessionStart `additionalContext`. Nothing is installed automatically.
+- **`mimo update` CLI command**: Checks the remote `VERSION`, and if it differs from the installed version, downloads and runs `install.sh` pinned to the target version tag (falling back to `main` if the tag does not exist yet). Idempotent — reports "Already up to date" when versions match.
+- **Installed version tracking**: `install.sh` writes the installed version to `~/.claude/memory-state/mimo-installed-version`, which both the update-check hook and `mimo update` read to compare against the remote `VERSION`.
 
 ## [1.4.0] - 2026-03-08
 

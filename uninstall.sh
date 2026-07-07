@@ -90,6 +90,14 @@ for bin in "$HOME/.local/bin/mimo" "$HOME/.local/bin/mimo-uninstall"; do
     fi
 done
 
+# ─── 3b. Remove mimo-internal state files (not user data) ────────────────────
+for internal in "$HOME/.claude/memory-state/mimo-installed-version" "$HOME/.claude/memory-state/mimo-update-check"; do
+    if [ -f "$internal" ]; then
+        rm -f "$internal"
+        info "Removed $(basename "$internal")"
+    fi
+done
+
 # ─── 4. Preserve user data ───────────────────────────────────────────────────
 echo ""
 warn "Preserved (your data):"

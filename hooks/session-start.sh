@@ -17,11 +17,22 @@ CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
 if [ -z "$SESSION_ID" ]; then SESSION_ID="fallback-$$-$(date +%s)"; fi
 STATE_FILE="$STATE_DIR/${SESSION_ID}.json"
 
+# Atomically rewrite the state file from jq output. Never clobbers valid state
+# with empty/corrupt output: the temp file is validated non-empty before mv, and
+# the ".tmp" suffix lets orphan cleanup (find -name "*.tmp") reap a crashed write.
+write_state() {
+    local tmp="${STATE_FILE}.$$.${RANDOM}.tmp"
+    if jq "$@" > "$tmp" && [ -s "$tmp" ]; then
+        mv "$tmp" "$STATE_FILE"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # Create state for new session (idempotent — preserves existing state on resume)
 if [ ! -f "$STATE_FILE" ]; then
-    jq -n --arg sid "$SESSION_ID" \
-        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false}' \
-        > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
+    write_state -n --arg sid "$SESSION_ID" \
+        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false}'
 fi
 
 # Export env vars for other hooks via CLAUDE_ENV_FILE
@@ -32,8 +43,14 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
     echo "export MIMO_CWD=\"$CWD\"" >> "$CLAUDE_ENV_FILE"
 fi
 
-# Clean up orphan state files from crashed sessions (7-day threshold)
-find "$STATE_DIR" -name "*.json" -mtime +7 -delete 2>/dev/null || true
+# Clean up orphan files from dead sessions using the StatusLine heartbeat:
+# an active session rewrites its state file every few seconds, so a stale mtime
+# (no heartbeat in 2h) means the session crashed or was force-quit. Also reap
+# orphaned jq temp files (crashed mid-write) that the *.json glob never matched.
+find "$STATE_DIR" -name "*.json" -mmin +120 -delete 2>/dev/null || true
+find "$STATE_DIR" -name "*-changes.log" -mmin +120 -delete 2>/dev/null || true
+find "$STATE_DIR" -name "*-postcompact.flag" -mmin +120 -delete 2>/dev/null || true
+find "$STATE_DIR" -name "*.tmp" -mmin +60 -delete 2>/dev/null || true
 
 # ─── Auto-update check (at most once per 24h, never blocks) ──────────────────
 UPDATE_CHECK_FILE="$STATE_DIR/mimo-update-check"

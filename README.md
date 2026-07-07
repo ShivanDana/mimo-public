@@ -180,7 +180,7 @@ Use these inside Claude Code at any time — no need to wait for automatic thres
 | `/save-full` | Comprehensive save | End-of-session save with full detail, or before running `/compact` |
 | `/pcompact` | Compact prep | Generate context-preserving instructions to pass to `/compact` |
 
-These are Claude Code skills installed to `~/.claude/skills/` and auto-discovered as slash commands.
+These are Claude Code skills installed by mimo to `~/.claude/skills/` and auto-discovered as slash commands.
 
 ### Auto-initialization
 
@@ -198,7 +198,7 @@ mimo installs 9 hooks into Claude Code's hook system:
 | Hook | Event | What it does |
 |------|-------|-------------|
 | `statusline-memory.sh` | StatusLine | Colored progress bar with context %, model, cost, threshold indicators. Writes per-session state |
-| `session-start.sh` | SessionStart (startup/resume) | Creates per-session state, auto-inits project files, injects memory context, exports env vars via `CLAUDE_ENV_FILE`, cleans up stale state (7-day) |
+| `session-start.sh` | SessionStart (startup/resume) | Creates per-session state, auto-inits project files, injects memory context, exports env vars via `CLAUDE_ENV_FILE`, cleans up dead-session state (no heartbeat in 2h) and orphaned temp files |
 | `session-start-compact.sh` | SessionStart (compact) | Lightweight context reminder after compaction, writes post-compact flag for context recovery |
 | `memory-gate.sh` | Stop | Blocks Claude from stopping until memory save is complete. Includes tracked file list in save instructions, then instructs Claude to resume |
 | `precompact-save.sh` | PreCompact | Backs up full transcript + generates human-readable summary + outputs custom compact instructions |
@@ -210,12 +210,15 @@ mimo installs 9 hooks into Claude Code's hook system:
 ## CLI
 
 ```bash
-mimo status      # Diagnostic: hooks, skills, settings, dependencies, active sessions
+mimo status      # Diagnostic: hooks, skills, settings, dependencies, active/stale sessions
 mimo init        # Re-initialize memory files in current project
+mimo cleanup     # Remove stale session state, orphaned temp files, and old backups (>30d)
 mimo update      # Check for and install the latest version
 mimo version     # Print version
 mimo uninstall   # Remove mimo (preserves your memory data)
 ```
+
+`mimo status` marks a session `stale` when its state file hasn't been touched (no StatusLine heartbeat) in over 2 hours — a sign the session crashed or was force-quit. `mimo cleanup` reaps those, plus orphaned temp files and transcript backups older than 30 days.
 
 ## File locations
 
@@ -224,6 +227,7 @@ mimo uninstall   # Remove mimo (preserves your memory data)
 | `~/.claude/hooks/*.sh` | 9 hook scripts | Install |
 | `~/.claude/skills/save/SKILL.md` | `/save` slash command | Install |
 | `~/.claude/skills/save-full/SKILL.md` | `/save-full` slash command | Install |
+| `~/.claude/skills/pcompact/SKILL.md` | `/pcompact` slash command | Install |
 | `~/.claude/settings.json` | Hook + statusline registration (merged) | Install |
 | `~/.claude/memory-state/<session-id>.json` | Per-session state (context %, thresholds, flags) | Each session |
 | `~/.claude/memory-state/<session-id>-changes.log` | Per-session file change tracker | During sessions |
@@ -322,6 +326,9 @@ mimo backs up the full transcript before compaction and outputs custom instructi
 
 **Is my data safe when I uninstall?**
 Yes. Uninstall removes hooks, settings entries, and the CLI, but preserves all your data: `~/.claude/backups/`, `~/.claude/memory-state/`, and project `CLAUDE.md`/`CLAUDE-FULL.md` files.
+
+**How does the auto-update check work?**
+On session start, the `session-start.sh` hook checks GitHub for a newer version at most once every 24 hours. The check is throttled by the mtime of `~/.claude/memory-state/mimo-update-check` (a 24h TTL), and the actual version fetch runs as a backgrounded `curl` — it never blocks session start. When a newer version is found, mimo shows a notification in the injected session context. Nothing is installed automatically: run `mimo update` to install the latest version when you're ready.
 
 **What is the workflow guidance block?**
 When mimo creates `CLAUDE.md`, it includes a "Workflow Orchestration" section with opinionated best practices: plan mode for non-trivial tasks, subagent strategy, self-improvement loop, verification before done, demand elegance, and autonomous bug fixing. You can edit or remove this block — it's just guidance, not required for memory to work.

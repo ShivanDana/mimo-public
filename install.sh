@@ -197,7 +197,7 @@ MIMO_HOOKS=$(cat <<'MJSON'
   ],
   "PostToolUse": [
     {
-      "matcher": "Write|Edit",
+      "matcher": "Write|Edit|NotebookEdit",
       "hooks": [
         {"type": "command", "command": "bash ~/.claude/hooks/track-changes.sh", "async": true, "timeout": 5}
       ]
@@ -311,4 +311,5 @@ echo ""
 echo "Slash commands (inside Claude Code):"
 echo "  /save           — quick checkpoint"
 echo "  /save-full      — full memory save"
+echo "  /pcompact       — generate context-preserving /compact instructions"
 echo ""

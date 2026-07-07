@@ -9,15 +9,19 @@ mkdir -p "$BACKUP_DIR"
 # Read stdin JSON
 INPUT=$(cat)
 TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // ""')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""' | tr -cd 'a-zA-Z0-9-')
 TRIGGER=$(echo "$INPUT" | jq -r '.trigger // "unknown"')
 CUSTOM_INSTRUCTIONS=$(echo "$INPUT" | jq -r '.custom_instructions // ""')
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
+# Short session prefix keeps backup filenames identifiable
+SID_SHORT="${SESSION_ID:0:8}"
+[ -z "$SID_SHORT" ] && SID_SHORT="unknown"
+
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     # Copy full transcript
-    cp "$TRANSCRIPT" "$BACKUP_DIR/${TIMESTAMP}-precompact.jsonl"
+    cp "$TRANSCRIPT" "$BACKUP_DIR/${TIMESTAMP}-${SID_SHORT}-precompact.jsonl"
 
     # Generate human-readable summary
     {

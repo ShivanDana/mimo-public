@@ -14,7 +14,13 @@ fi
 unset _mimo_placeholder
 HOOKS_DIR="$HOME/.claude/hooks"
 STATE_DIR="$HOME/.claude/memory-state"
+BACKUP_DIR="$HOME/.claude/backups"
 SETTINGS_FILE="$HOME/.claude/settings.json"
+
+# Sessions with no StatusLine heartbeat in this many seconds are considered stale
+STALE_THRESHOLD=7200
+# Transcript backups older than this many days are pruned by 'mimo cleanup'
+BACKUP_RETENTION_DAYS=30
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -78,7 +84,7 @@ cmd_status() {
 
     echo ""
     printf "${BOLD}Skills:${NC}\n"
-    for skill in save save-full; do
+    for skill in save save-full pcompact; do
         if [ -f "$HOME/.claude/skills/$skill/SKILL.md" ]; then
             ok "/$skill"
         else
@@ -89,14 +95,22 @@ cmd_status() {
     echo ""
     printf "${BOLD}Active sessions:${NC}\n"
     SESSION_COUNT=0
+    NOW=$(date +%s)
     if [ -d "$STATE_DIR" ]; then
         for sf in "$STATE_DIR"/*.json; do
             [ -f "$sf" ] || continue
+            case "$sf" in *.tmp) continue ;; esac
             SESSION_COUNT=$((SESSION_COUNT + 1))
             SID=$(jq -r '.session_id // "?"' "$sf" 2>/dev/null || echo "?")
             PCT=$(jq -r '.percentage // 0' "$sf" 2>/dev/null || echo "0")
             THRESHOLD=$(jq -r '.threshold // "clean"' "$sf" 2>/dev/null || echo "clean")
-            ok "${SID}: ${PCT}%, threshold: ${THRESHOLD}"
+            LAST_UPDATE=$(stat -f %m "$sf" 2>/dev/null || stat -c %Y "$sf" 2>/dev/null || echo "0")
+            AGE=$(( NOW - LAST_UPDATE ))
+            if [ "$AGE" -gt "$STALE_THRESHOLD" ]; then
+                dim "${SID}: ${PCT}%, stale (last seen $(( AGE / 3600 ))h ago)"
+            else
+                ok "${SID}: ${PCT}%, threshold: ${THRESHOLD}"
+            fi
         done
     fi
     if [ "$SESSION_COUNT" -eq 0 ]; then
@@ -367,6 +381,51 @@ cmd_uninstall() {
     fi
 }
 
+cmd_cleanup() {
+    echo ""
+    printf "${BOLD}mimo cleanup${NC}\n"
+    echo ""
+
+    NOW=$(date +%s)
+    STALE_COUNT=0
+    TMP_COUNT=0
+    BACKUP_COUNT=0
+
+    if [ -d "$STATE_DIR" ]; then
+        # Remove stale session triples (no StatusLine heartbeat in >2h)
+        for f in "$STATE_DIR"/*.json; do
+            [ -f "$f" ] || continue
+            case "$f" in *.tmp) continue ;; esac
+            LAST_UPDATE=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo "0")
+            AGE=$(( NOW - LAST_UPDATE ))
+            if [ "$AGE" -gt "$STALE_THRESHOLD" ]; then
+                SID=$(basename "$f" .json)
+                rm -f "$f" "$STATE_DIR/${SID}-changes.log" "$STATE_DIR/${SID}-postcompact.flag"
+                STALE_COUNT=$((STALE_COUNT + 1))
+            fi
+        done
+
+        # Remove orphaned jq temp files older than 60 min
+        TMP_COUNT=$(find "$STATE_DIR" -name "*.tmp" -mmin +60 2>/dev/null | wc -l | tr -d ' ')
+        find "$STATE_DIR" -name "*.tmp" -mmin +60 -delete 2>/dev/null || true
+    fi
+
+    # Prune transcript backups older than the retention window
+    if [ -d "$BACKUP_DIR" ]; then
+        BACKUP_COUNT=$(find "$BACKUP_DIR" \( -name "*.jsonl" -o -name "*-precompact-summary.md" \) -mtime +${BACKUP_RETENTION_DAYS} 2>/dev/null | wc -l | tr -d ' ')
+        find "$BACKUP_DIR" \( -name "*.jsonl" -o -name "*-precompact-summary.md" \) -mtime +${BACKUP_RETENTION_DAYS} -delete 2>/dev/null || true
+    fi
+
+    if [ "$STALE_COUNT" -gt 0 ]; then
+        info "Removed $STALE_COUNT stale session(s)"
+    else
+        info "No stale sessions found (all sessions are active)"
+    fi
+    info "Removed $TMP_COUNT orphaned temp file(s)"
+    info "Removed $BACKUP_COUNT old backup(s) (>${BACKUP_RETENTION_DAYS}d)"
+    echo ""
+}
+
 cmd_help() {
     cat << HELP
 mimo v${MIMO_VERSION} — hook-based memory system for Claude Code
@@ -376,6 +435,7 @@ Usage: mimo <command>
 Commands:
   init        Re-initialize memory files in the current project
   status      Show diagnostic information
+  cleanup     Remove stale session state, orphaned temp files, and old backups
   update      Check for and install the latest version
   version     Print version
   uninstall   Remove mimo from your system
@@ -398,6 +458,7 @@ HELP
 case "${1:-help}" in
     init)      cmd_init ;;
     status)    cmd_status ;;
+    cleanup)   cmd_cleanup ;;
     update)    cmd_update ;;
     version)   cmd_version ;;
     uninstall) cmd_uninstall ;;

@@ -28,6 +28,24 @@ if [ -z "$STATE_FILE" ]; then
     STATE_FILE="$STATE_DIR/${SESSION_ID}.json"
 fi
 
+# Atomically rewrite the state file from jq output. Never clobbers valid state
+# with empty/corrupt output: the temp file is validated non-empty before mv, and
+# the ".tmp" suffix lets orphan cleanup (find -name "*.tmp") reap a crashed write.
+write_state() {
+    local tmp="${STATE_FILE}.$$.${RANDOM}.tmp"
+    if jq "$@" > "$tmp" && [ -s "$tmp" ]; then
+        mv "$tmp" "$STATE_FILE"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+# Sanitize percentage — default to 0 if not a valid number (jq may emit "null"
+# when .context_window is missing entirely).
+if ! printf '%s' "$PERCENTAGE" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+    PERCENTAGE=0
+fi
+
 # Round percentage to integer
 PCT_INT=$(printf "%.0f" "$PERCENTAGE")
 if [ "$PCT_INT" -gt 100 ]; then PCT_INT=100; fi
@@ -35,9 +53,8 @@ if [ "$PCT_INT" -lt 0 ]; then PCT_INT=0; fi
 
 # Create state file if it doesn't exist yet
 if [ ! -f "$STATE_FILE" ]; then
-    jq -n --arg sid "$SESSION_ID" \
-        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false}' \
-        > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
+    write_state -n --arg sid "$SESSION_ID" \
+        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false}'
 fi
 
 # Read current done flags
@@ -52,15 +69,14 @@ elif [ "$PCT_INT" -ge "$CHECKPOINT_THRESHOLD" ] && [ "$CHECKPOINT_DONE" = "false
     THRESHOLD="checkpoint_needed"
 fi
 
-# Update state file (atomic write with PID-based tmp)
-jq -n \
+# Update state file (validated atomic write — old state survives a failed jq)
+write_state -n \
     --arg sid "$SESSION_ID" \
     --argjson pct "$PCT_INT" \
     --arg threshold "$THRESHOLD" \
     --argjson cp_done "$([ "$CHECKPOINT_DONE" = "true" ] && echo true || echo false)" \
     --argjson fs_done "$([ "$FULLSAVE_DONE" = "true" ] && echo true || echo false)" \
-    '{session_id: $sid, percentage: $pct, threshold: $threshold, checkpoint_done: $cp_done, fullsave_done: $fs_done}' \
-    > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
+    '{session_id: $sid, percentage: $pct, threshold: $threshold, checkpoint_done: $cp_done, fullsave_done: $fs_done}'
 
 # Build progress bar
 FILLED=$(( PCT_INT * BAR_WIDTH / 100 ))

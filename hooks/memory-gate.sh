@@ -17,6 +17,18 @@ if [ -z "$STATE_FILE" ]; then
     STATE_FILE="$STATE_DIR/${SESSION_ID}.json"
 fi
 
+# Atomically rewrite the state file from jq output. Never clobbers valid state
+# with empty/corrupt output: the temp file is validated non-empty before mv, and
+# the ".tmp" suffix lets orphan cleanup (find -name "*.tmp") reap a crashed write.
+write_state() {
+    local tmp="${STATE_FILE}.$$.${RANDOM}.tmp"
+    if jq "$@" > "$tmp" && [ -s "$tmp" ]; then
+        mv "$tmp" "$STATE_FILE"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # LOOP BREAKER: If stop_hook_active is true, Claude is already continuing
 # from a previous stop hook block. Allow it to stop now.
 STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
@@ -41,11 +53,9 @@ LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // ""')
 if echo "$LAST_MSG" | grep -qiE '(checkpoint saved|memory saved)'; then
     # Claude already saved — mark done and allow stop
     if [ "$THRESHOLD" = "fullsave_needed" ]; then
-        jq '.fullsave_done = true | .checkpoint_done = true | .threshold = "clean"' "$STATE_FILE" \
-            > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
+        write_state '.fullsave_done = true | .checkpoint_done = true | .threshold = "clean"' "$STATE_FILE"
     elif [ "$THRESHOLD" = "checkpoint_needed" ]; then
-        jq '.checkpoint_done = true | .threshold = "clean"' "$STATE_FILE" \
-            > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
+        write_state '.checkpoint_done = true | .threshold = "clean"' "$STATE_FILE"
     fi
     exit 0
 fi
@@ -64,8 +74,7 @@ fi
 # FULL SAVE (80%+)
 if [ "$THRESHOLD" = "fullsave_needed" ]; then
     # Mark as done before blocking (prevents re-trigger after Claude saves)
-    jq '.fullsave_done = true | .checkpoint_done = true | .threshold = "clean"' "$STATE_FILE" \
-        > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
+    write_state '.fullsave_done = true | .checkpoint_done = true | .threshold = "clean"' "$STATE_FILE"
 
     {
         cat <<'INSTRUCTIONS'
@@ -101,8 +110,7 @@ fi
 # CHECKPOINT (50%+)
 if [ "$THRESHOLD" = "checkpoint_needed" ]; then
     # Mark as done before blocking
-    jq '.checkpoint_done = true | .threshold = "clean"' "$STATE_FILE" \
-        > "${STATE_FILE}.$$.tmp" && mv "${STATE_FILE}.$$.tmp" "$STATE_FILE"
+    write_state '.checkpoint_done = true | .threshold = "clean"' "$STATE_FILE"
 
     {
         cat <<'INSTRUCTIONS'

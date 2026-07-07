@@ -15,9 +15,12 @@ if [ -z "$CHANGES_LOG" ]; then
     CHANGES_LOG="$HOME/.claude/memory-state/${SESSION_ID}-changes.log"
 fi
 
-# Extract file_path from tool_input
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // ""')
+# Extract path from tool_input (Write/Edit use file_path, NotebookEdit uses notebook_path)
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // .tool_input.path // ""')
 [ -z "$FILE_PATH" ] && exit 0
+
+# Ensure the state dir exists — PostToolUse can fire before SessionStart on a fast first edit
+mkdir -p "$(dirname "$CHANGES_LOG")"
 
 # Append to changes log (one path per line, deduped at read time)
 echo "$FILE_PATH" >> "$CHANGES_LOG"
