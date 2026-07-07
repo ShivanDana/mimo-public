@@ -146,10 +146,27 @@ if [ "$SAVED" = "true" ]; then
 fi
 
 # ── f. GIVE-UP GUARD ─────────────────────────────────────────────────────────
-# Two emissions with no verified save: stop nagging. Reset to clean so the
-# session is never blocked forever on a save Claude cannot or will not perform.
+# Two emissions with no verified save: stop nagging. Reset to clean AND mark the
+# pending kind's done flag(s) so the give-up is durable: statusline-memory.sh
+# recomputes .threshold from (percentage, done flags) on every render, so unless
+# we set the done flag it would just re-arm *_needed (pct is still over the line)
+# and the gate would nag again — 2 nags, a pause, 2 more, forever. Setting done
+# means "done trying — do not re-arm this crossing."
 if [ "$SAVE_ATTEMPTS" -ge 2 ]; then
-    write_state '.threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = ""' "$STATE_FILE"
+    # Resolve the kind we gave up on: the recorded pending kind wins; fall back
+    # to the current threshold (fullsave_needed → fullsave) otherwise.
+    GIVEUP_KIND="$PENDING_KIND"
+    if [ -z "$GIVEUP_KIND" ]; then
+        case "$THRESHOLD" in
+            fullsave_needed) GIVEUP_KIND="fullsave" ;;
+            *)               GIVEUP_KIND="checkpoint" ;;
+        esac
+    fi
+    if [ "$GIVEUP_KIND" = "fullsave" ]; then
+        write_state '.checkpoint_done = true | .fullsave_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = ""' "$STATE_FILE"
+    else
+        write_state '.checkpoint_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = ""' "$STATE_FILE"
+    fi
     exit 0
 fi
 
@@ -202,6 +219,14 @@ if [ "$THRESHOLD" = "checkpoint_needed" ] || [ "$THRESHOLD" = "fullsave_needed" 
     exit 2
 fi
 
-# Pending but unverifiable and not yet at the give-up cap (e.g. threshold fell
-# back to clean while a request was outstanding). Allow the stop.
+# Pending but unverifiable and not yet at the give-up cap (e.g. compaction
+# dropped the percentage below the line, so statusline recomputed threshold=clean
+# while a request was outstanding). A request whose crossing evaporated is
+# cancelled — clear save_requested_at/save_attempts/pending_save_kind (leaving
+# threshold and done flags untouched) so a LATER genuine crossing issues a fresh
+# request and cannot be spuriously "verified" by an unrelated CLAUDE.md edit that
+# happened to occur after this now-dead request.
+if [ "$SAVE_REQUESTED_AT" -gt 0 ]; then
+    write_state '.save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = ""' "$STATE_FILE"
+fi
 exit 0
