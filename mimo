@@ -274,7 +274,7 @@ cmd_init() {
         # no disruption of the user's own top content). With --with-workflow and
         # no existing block, append the workflow block at the END too.
         if [ "$with_workflow" = "true" ] \
-           && ! grep -q "## Workflow Orchestration" CLAUDE.md 2>/dev/null; then
+           && ! grep -q "## Operating Mode" CLAUDE.md 2>/dev/null; then
             if [ -f "$TEMPLATES_DIR/claude-md-workflow.md" ]; then
                 {
                     echo ""
@@ -708,7 +708,7 @@ Usage: mimo <command>
 
 Commands:
   init [opts]  Initialize memory files in the current project
-                 --with-workflow  include the Workflow Orchestration block
+                 --with-workflow  include the base-rules guidance block
                  --force-home     allow init inside \$HOME (normally refused)
   status      Show diagnostic information (hooks, skills, config, sessions)
   doctor      Deep diagnostics (settings registrations, statusLine, config,

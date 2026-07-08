@@ -216,7 +216,7 @@ On session start, mimo can auto-create `CLAUDE.md` and `CLAUDE-FULL.md`. This is
 
 A **hard `$HOME` guard** applies in every mode: mimo will never auto-create a `CLAUDE.md` in your home directory, because a file there loads into *every* Claude Code session (cross-project contamination). When auto-init is skipped and no `CLAUDE.md` exists, mimo injects a one-line hint to run `mimo init`.
 
-A freshly created `CLAUDE.md` contains the title, a one-line description, and the four Memory sections — schema'd Current State, an empty Project Card, Recent Sessions, and Key Decisions — nothing else. Set `WORKFLOW_BLOCK=on` (or run `mimo init --with-workflow`) to also include the opinionated "Workflow Orchestration" block. If a `CLAUDE.md` already exists, mimo only **appends** the memory sections and never rewrites the top of your file. Existing projects on the older layout migrate organically: the next `/save-full` rewrites a free-form Current State into the schema and creates the Project Card — hooks never rewrite your files. Idempotent — running twice produces the same result.
+A freshly created `CLAUDE.md` contains the title, a one-line description, and the four Memory sections — schema'd Current State, an empty Project Card, Recent Sessions, and Key Decisions — nothing else. Set `WORKFLOW_BLOCK=on` (or run `mimo init --with-workflow`) to also include the optional base-rules guidance block (see the FAQ). If a `CLAUDE.md` already exists, mimo only **appends** the memory sections and never rewrites the top of your file. Existing projects on the older layout migrate organically: the next `/save-full` rewrites a free-form Current State into the schema and creates the Project Card — hooks never rewrite your files. Idempotent — running twice produces the same result.
 
 `CLAUDE-FULL.md` is created as an empty deep archive.
 
@@ -293,7 +293,7 @@ All customization lives in one file: **`~/.claude/mimo.conf`**. Do **not** edit 
 #BAR_WIDTH=20              # statusline progress-bar width (chars)
 
 #AUTO_INIT=git-only        # git-only | always | never  (see Auto-initialization)
-#WORKFLOW_BLOCK=off        # off | on — include the Workflow Orchestration block in new CLAUDE.md
+#WORKFLOW_BLOCK=off        # off | on — include the base-rules guidance block in new CLAUDE.md
 
 #BACKUP_RETENTION_DAYS=30  # delete transcript backups older than this
 #STALE_MINUTES=120         # a session idle this long (no heartbeat) is "stale"
@@ -397,7 +397,7 @@ Yes. Uninstall removes hooks, settings entries, and the CLI, but preserves all y
 On session start, the `session-start.sh` hook checks GitHub for a newer version at most once every 24 hours. The check is throttled by the mtime of `~/.claude/memory-state/mimo-update-check` (a 24h TTL), and the actual version fetch runs as a backgrounded `curl` — it never blocks session start. When a newer version is found, mimo shows a notification in the injected session context. Nothing is installed automatically: run `mimo update` to install the latest version when you're ready.
 
 **What is the workflow guidance block?**
-An optional "Workflow Orchestration" section with opinionated best practices: plan mode for non-trivial tasks, subagent strategy, self-improvement loop, verification before done, demand elegance, and autonomous bug fixing. It is **off by default** — new `CLAUDE.md` files get only the memory sections. Enable it with `WORKFLOW_BLOCK=on` in `~/.claude/mimo.conf`, or per-project with `mimo init --with-workflow`. It's just guidance, never required for memory to work.
+An optional base-rules ruleset (marker `## Operating Mode`) with opinionated best practices for how Claude should work: operating mode, surfacing unknowns before implementation, scope discipline, boundaries, verification and honest reporting, subagent usage, a self-improvement loop into `tasks/lessons.md`, task tracking in `tasks/todo.md`, and communication style. It is **off by default** — new `CLAUDE.md` files get only the memory sections. Enable it with `WORKFLOW_BLOCK=on` in `~/.claude/mimo.conf`, or per-project with `mimo init --with-workflow`. It's just guidance, never required for memory to work.
 
 **Can I trigger a save without waiting for the threshold?**
 Yes. Use `/save` for a quick checkpoint or `/save-full` for a comprehensive save at any time. Claude will resume your interrupted task after saving.

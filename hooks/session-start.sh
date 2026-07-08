@@ -197,7 +197,7 @@ if [ "$DO_AUTOINIT" = "true" ]; then
         # no disruption of the user's own top content). When WORKFLOW_BLOCK=on
         # and the block is missing, append it at the END too.
         if [ "$WORKFLOW_BLOCK" = "on" ] \
-           && ! grep -q "## Workflow Orchestration" "$CWD/CLAUDE.md" 2>/dev/null \
+           && ! grep -q "## Operating Mode" "$CWD/CLAUDE.md" 2>/dev/null \
            && [ -f "$TEMPLATES_DIR/claude-md-workflow.md" ]; then
             {
                 echo ""

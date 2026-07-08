@@ -135,15 +135,18 @@ run_ss() {
     ( cd "$PROJECT_DIR" && git init -q )
     run_ss sess-1 "$PROJECT_DIR"
     [ -f "$PROJECT_DIR/CLAUDE.md" ]
-    ! grep -q "## Workflow Orchestration" "$PROJECT_DIR/CLAUDE.md"
+    ! grep -q "## Operating Mode" "$PROJECT_DIR/CLAUDE.md"
 }
 
-@test "workflow block: on via config includes the workflow block" {
+@test "workflow block: on via config includes the base-rules block" {
     export MIMO_CONF="$HOME/.claude/mimo.conf"
     printf 'WORKFLOW_BLOCK=on\n' > "$MIMO_CONF"
     ( cd "$PROJECT_DIR" && git init -q )
     run_ss sess-1 "$PROJECT_DIR"
-    grep -q "## Workflow Orchestration" "$PROJECT_DIR/CLAUDE.md"
+    grep -q "## Operating Mode" "$PROJECT_DIR/CLAUDE.md"
+    grep -q "## Scope Discipline" "$PROJECT_DIR/CLAUDE.md"
+    # Single inclusion: block present exactly once.
+    [ "$(grep -c '## Operating Mode' "$PROJECT_DIR/CLAUDE.md")" -eq 1 ]
 }
 
 @test "auto-init: appends memory sections to an existing CLAUDE.md without them" {

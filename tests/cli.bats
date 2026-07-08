@@ -45,9 +45,15 @@ mimo_in() {
     grep -q "Memory — Current State" "$PROJECT_DIR/CLAUDE.md"
 }
 
-@test "cli: init --with-workflow includes the workflow block" {
+@test "cli: init --with-workflow includes the base-rules block" {
     mimo_in "$PROJECT_DIR" init --with-workflow
-    grep -q "## Workflow Orchestration" "$PROJECT_DIR/CLAUDE.md"
+    grep -q "## Operating Mode" "$PROJECT_DIR/CLAUDE.md"
+    grep -q "## Scope Discipline" "$PROJECT_DIR/CLAUDE.md"
+    # Single inclusion: block present exactly once.
+    [ "$(grep -c '## Operating Mode' "$PROJECT_DIR/CLAUDE.md")" -eq 1 ]
+    # Re-running does not duplicate the block.
+    mimo_in "$PROJECT_DIR" init --with-workflow
+    [ "$(grep -c '## Operating Mode' "$PROJECT_DIR/CLAUDE.md")" -eq 1 ]
 }
 
 @test "cli: init appends memory sections to an existing CLAUDE.md" {

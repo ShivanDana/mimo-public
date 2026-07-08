@@ -14,6 +14,7 @@ All notable changes to mimo will be documented in this file.
 - **`track-changes.sh` excludes memory files**: `CLAUDE.md`, `CLAUDE-FULL.md`, and `mimo-user.md` are no longer logged — a save Writes those, which would otherwise feed the counter that triggers saves (saves triggering saves). Side benefit: the gate's tracked-files list stops presenting memory files as "work".
 - **`/save-full`** gains a user-profile review step (after the Project Card step); `/save` is unchanged (profile churn should be rare, so checkpoints skip it). Both save skills stay within the instruction budget.
 - **Config**: `SAVE_AFTER_CHANGES=40` and `USER_PROFILE=on` added to the `mimo.conf` template (commented) and the `mimo doctor` known-keys list. `uninstall.sh` lists `~/.claude/mimo-user.md` among preserved user data.
+- **Optional guidance block**: the content of the opt-in `WORKFLOW_BLOCK` guidance block was replaced with the user's base-rules ruleset (operating mode, unknowns before implementation, scope discipline, boundaries, verification, subagents, self-improvement, task tracking, communication). Presence marker is now `## Operating Mode`; the `WORKFLOW_BLOCK=on` / `mimo init --with-workflow` enablement is unchanged.
 
 ## [2.3.0] - 2026-07-08
 
