@@ -202,8 +202,8 @@ if [ "$THRESHOLD" = "checkpoint_needed" ] || [ "$THRESHOLD" = "fullsave_needed" 
     TRACKED_FILES=$(
         {
             if [ -f "$CHANGES_LOG" ]; then cat "$CHANGES_LOG"; fi
-            git -C "$CWD" status --porcelain=v1 2>/dev/null | awk '{print $NF}' || true
-        } | sed '/^[[:space:]]*$/d' | sort -u | head -50
+            git -C "$CWD" status --porcelain=v1 2>/dev/null | sed 's/^...//' || true
+        } | sed '/^[[:space:]]*$/d' | sort -u | head -50 || true
     )
 
     {

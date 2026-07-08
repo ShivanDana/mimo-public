@@ -29,7 +29,7 @@ CURRENT_STATE=""
 KEY_DECISIONS=""
 if [ -f "$CWD/CLAUDE.md" ]; then
     CURRENT_STATE=$(sed -n '/^## Memory — Current State/,/^## /{/^## Memory — Current State/d;/^## /d;p;}' "$CWD/CLAUDE.md" | head -15)
-    KEY_DECISIONS=$(sed -n '/^## Memory — Key Decisions/,/^## \|^$/{ /^## Memory — Key Decisions/d; /^## /d; p; }' "$CWD/CLAUDE.md" | head -15)
+    KEY_DECISIONS=$(sed -n '/^## Memory — Key Decisions/,/^## /{/^## Memory — Key Decisions/d;/^## /d;p;}' "$CWD/CLAUDE.md" | head -15)
 fi
 
 # Get CLAUDE-FULL.md line count

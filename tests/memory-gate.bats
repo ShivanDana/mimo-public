@@ -80,6 +80,25 @@ teardown() { mimo_teardown; }
     [[ "$output" == *"grep -n '^## S'"* ]]
 }
 
+# REGRESSION (C1): a huge changes.log must not SIGPIPE-kill the gate. The
+# sort|head -50 pipeline blocks past the ~64KB pipe buffer (>~1300 unique
+# paths); without `|| true` sort dies with SIGPIPE (141) under pipefail and the
+# whole hook aborts (exit 141) — silently dropping the save prompt. Assert the
+# gate still blocks (exit 2), emits the header, and truncates to exactly 50.
+@test "gate: 3000-path changes log still blocks (exit 2, not 141) and truncates to 50" {
+    export MIMO_CHANGES_LOG="$STATE_DIR/sess-1-changes.log"
+    awk 'BEGIN{for(i=1;i<=3000;i++)printf "/proj/f%05d.py\n",i}' > "$MIMO_CHANGES_LOG"
+    seed_state "$MIMO_STATE_FILE" threshold=checkpoint_needed percentage=55
+    run bash "$GATE" <<<"$(hook_json sess-1 "$MIMO_CWD")"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"CHECKPOINT REQUIRED"* ]]
+    [[ "$output" == *"Files changed this session"* ]]
+    # Truncation: exactly 50 tracked paths in the emitted list.
+    local n
+    n=$(printf '%s\n' "$output" | grep -c '^/proj/f[0-9]*\.py$')
+    [ "$n" -eq 50 ]
+}
+
 @test "gate: tracked-files list merges changes log with git status" {
     ( cd "$PROJECT_DIR" && git init -q && git config user.email t@t.t && git config user.name t )
     printf 'uncommitted content\n' > "$PROJECT_DIR/newfile.txt"

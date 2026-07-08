@@ -122,6 +122,19 @@ teardown() { mimo_teardown; }
     [ -z "$output" ]
 }
 
+# REGRESSION (M1): Key Decisions extraction must stop at the next heading on BSD
+# sed too. The old end-address `/^## \|^$/` used GNU-only `\|` alternation, which
+# BSD sed treats literally — never matches, so the range ran to EOF and bled the
+# following section into the injected context. Fixed to the portable `/^## /`.
+@test "user-prompt: Key Decisions extraction stops at next heading (BSD-sed portable)" {
+    printf '## Memory — Current State\nFocus: testing\n\n## Memory — Key Decisions\n- decided X\n\n## Other Section\nOTHERSECTIONBLEED\n' > "$PROJECT_DIR/CLAUDE.md"
+    touch "$STATE_DIR/s1-postcompact.flag"
+    run bash "$UPROMPT" <<<"$(hook_json s1 "$PROJECT_DIR")"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"decided X"* ]]
+    [[ "$output" != *"OTHERSECTIONBLEED"* ]]
+}
+
 # ── subagent-context.sh ──────────────────────────────────────────────────────
 
 @test "subagent: injects Memory — Current State from CLAUDE.md" {

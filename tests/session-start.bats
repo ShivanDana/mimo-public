@@ -165,3 +165,17 @@ run_ss() {
     run_ss sess-1 "$PROJECT_DIR"
     [[ "$ctx" == *"latest: S4"* ]]
 }
+
+# REGRESSION (I1): thousands of backups must not SIGPIPE-kill SessionStart. The
+# `ls -1t | head -1` listing blocks past the ~64KB pipe buffer (>~1300 files);
+# without `|| true`, ls dies with SIGPIPE (141) under pipefail and the hook
+# aborts before emitting additionalContext. Assert exit 0 + valid JSON context.
+@test "session-start: 2000 backups still emit valid additionalContext (exit 0, not 141)" {
+    for i in $(seq 1 2000); do
+        : > "$BACKUP_DIR/b$i.jsonl"
+    done
+    run_ss sess-1 "$PROJECT_DIR"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null
+    [[ "$ctx" == *"Transcript backups: 2000 saved"* ]]
+}

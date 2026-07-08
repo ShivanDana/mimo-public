@@ -254,7 +254,7 @@ fi
 # Check for recent backups
 BACKUP_COUNT=$(find "$BACKUP_DIR" -name "*.jsonl" -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
 if [ "$BACKUP_COUNT" -gt "0" ]; then
-    LATEST_BACKUP=$(ls -1t "$BACKUP_DIR"/*.jsonl 2>/dev/null | head -1)
+    LATEST_BACKUP=$(ls -1t "$BACKUP_DIR"/*.jsonl 2>/dev/null | head -1 || true)
     BACKUP_DATE=$(date -r "$LATEST_BACKUP" +%Y-%m-%d 2>/dev/null || echo "unknown")
     MSG="${MSG}\nTranscript backups: ${BACKUP_COUNT} saved (latest: ${BACKUP_DATE})"
 fi

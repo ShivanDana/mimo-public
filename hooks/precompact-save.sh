@@ -32,15 +32,22 @@ if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
         [ -n "$CUSTOM_INSTRUCTIONS" ] && echo "Custom instructions: $CUSTOM_INSTRUCTIONS"
         echo ""
         echo "## User messages (first 50 lines)"
-        # Best-effort extraction — transcript format may vary
-        jq -r '
+        # Best-effort extraction — transcript format may vary. Capture first so a
+        # SIGPIPE from `head` (>50 user messages) can't masquerade as a parse
+        # failure; the fallback line only appears when jq yields nothing usable.
+        USER_MSGS=$(jq -r '
             select(.role == "user") |
             .content //
             (if .message then .message.content else empty end) |
             if type == "string" then .
             elif type == "array" then map(select(.type == "text") | .text) | join("\n")
             else empty end
-        ' "$TRANSCRIPT" 2>/dev/null | head -50 || echo "(could not parse transcript)"
+        ' "$TRANSCRIPT" 2>/dev/null | head -50 || true)
+        if [ -n "$USER_MSGS" ]; then
+            echo "$USER_MSGS"
+        else
+            echo "(could not parse transcript)"
+        fi
     } > "$BACKUP_DIR/${TIMESTAMP}-precompact-summary.md"
 fi
 
