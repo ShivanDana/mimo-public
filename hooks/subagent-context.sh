@@ -3,6 +3,12 @@
 # Provides subagents with session state and current focus from CLAUDE.md
 set -euo pipefail
 
+# ─── Config (defaults, then user overrides) ──────────────────────────────────
+USER_PROFILE=on
+MIMO_CONF="${MIMO_CONF:-$HOME/.claude/mimo.conf}"
+# shellcheck disable=SC1090
+[ -f "$MIMO_CONF" ] && . "$MIMO_CONF"
+
 # Read stdin JSON
 INPUT=$(cat)
 CWD=$(echo "$INPUT" | jq -r '.cwd // "."')
@@ -34,10 +40,12 @@ fi
 # User-profile INSTRUCTION lines (P12): standing rules like "never auto-push" are
 # exactly what subagents violate today — inject those; prose preferences about
 # output style are noise for a subagent, so PREFERENCE/WORKFLOW/CONTEXT are left
-# out here. `|| true` guards a SIGPIPE from head closing the grep early.
+# out here. Gated by USER_PROFILE (default on): USER_PROFILE=off in mimo.conf
+# silences injection here too, matching session-start — off means off everywhere.
+# `|| true` guards a SIGPIPE from head closing the grep early.
 PROFILE_FILE="${MIMO_USER_PROFILE_FILE:-$HOME/.claude/mimo-user.md}"
 PROFILE_INSTRUCTIONS=""
-if [ -f "$PROFILE_FILE" ]; then
+if [ "$USER_PROFILE" = "on" ] && [ -f "$PROFILE_FILE" ]; then
     PROFILE_INSTRUCTIONS=$(grep '^- INSTRUCTION:' "$PROFILE_FILE" 2>/dev/null | head -5 || true)
 fi
 

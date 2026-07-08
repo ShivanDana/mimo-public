@@ -230,6 +230,22 @@ PROFILE='# mimo user profile
     [[ "$ctx" == *"never push or tag"* ]]
 }
 
+@test "p12: subagent USER_PROFILE=off silences injection but keeps other sections" {
+    printf '%s\n' "$PROFILE" > "$MIMO_USER_PROFILE_FILE"
+    export MIMO_CONF="$HOME/.claude/mimo.conf"
+    printf 'USER_PROFILE=off\n' > "$MIMO_CONF"
+    export MIMO_STATE_FILE="$STATE_DIR/s1.json"
+    seed_state "$MIMO_STATE_FILE" percentage=33
+    run bash "$SUBAGENT" <<<"$(hook_json s1 "$PROJECT_DIR")"
+    [ "$status" -eq 0 ]
+    ctx="$(echo "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+    [[ "$ctx" != *"User instructions"* ]]
+    [[ "$ctx" != *"never push or tag"* ]]
+    # Other sections still emit normally.
+    [[ "$ctx" == *"[MIMO — Subagent Context]"* ]]
+    [[ "$ctx" == *"Parent session context usage: 33%"* ]]
+}
+
 @test "p12: save-full skill carries the user-profile step" {
     grep -q "user-profile" "$MIMO_SKILLS_DIR/save-full/SKILL.md"
     grep -q "mimo-user.md" "$MIMO_SKILLS_DIR/save-full/SKILL.md"
