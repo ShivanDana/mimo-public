@@ -135,6 +135,45 @@ teardown() { mimo_teardown; }
     [[ "$output" != *"OTHERSECTIONBLEED"* ]]
 }
 
+# P11 (Wave 3): the post-compaction injection must FRAME the recovered memory as
+# reference, not instructions — opening frames it, closing hand-off rules defer to
+# the incoming user message (latest-message-wins) and forbid confabulation.
+@test "user-prompt: post-compact injection carries the hand-off framing" {
+    printf '## Memory — Current State\nNext actionable (verbatim): "ship X"\nBlockers: None\n\n## Memory — Key Decisions\n- decided X\n' > "$PROJECT_DIR/CLAUDE.md"
+    touch "$STATE_DIR/s1-postcompact.flag"
+    run bash "$UPROMPT" <<<"$(hook_json s1 "$PROJECT_DIR")"
+    [ "$status" -eq 0 ]
+    # Valid JSON, and framing does not displace the memory content.
+    ctx="$(echo "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+    [[ "$ctx" == *"NOT instructions"* ]]
+    echo "$ctx" | grep -qi "single source of truth"
+    echo "$ctx" | grep -qi "do not resume"
+    # Abstention / no-confabulation clause.
+    echo "$ctx" | grep -Eqi "inventing|say so"
+    # Content survives the framing.
+    [[ "$ctx" == *"Next actionable"* ]]
+    [[ "$ctx" == *"decided X"* ]]
+}
+
+@test "user-prompt: framing opens and hand-off rules close (order preserved)" {
+    printf '## Memory — Current State\nFocus: testing\n\n## Memory — Key Decisions\n- decided X\n' > "$PROJECT_DIR/CLAUDE.md"
+    touch "$STATE_DIR/s1-postcompact.flag"
+    run bash "$UPROMPT" <<<"$(hook_json s1 "$PROJECT_DIR")"
+    ctx="$(echo "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+    # "recovered reference" appears before the first memory section…
+    [[ "${ctx%%Memory — Current State*}" == *"recovered reference"* ]]
+    # …and "Hand-off rules" appears after the last memory section.
+    [[ "${ctx##*Memory — Key Decisions}" == *"Hand-off rules"* ]]
+}
+
+@test "session-start-compact: banner carries the latest-message-wins reminder" {
+    run bash "$COMPACT" <<<"$(hook_json s1 "$PROJECT_DIR")"
+    [ "$status" -eq 0 ]
+    ctx="$(echo "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+    echo "$ctx" | grep -qi "single source of truth"
+    echo "$ctx" | grep -qi "do not resume"
+}
+
 # ── subagent-context.sh ──────────────────────────────────────────────────────
 
 @test "subagent: injects Memory — Current State from CLAUDE.md" {

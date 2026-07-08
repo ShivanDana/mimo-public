@@ -38,9 +38,12 @@ if [ -f "$CWD/CLAUDE-FULL.md" ]; then
     FULL_LINES=$(wc -l < "$CWD/CLAUDE-FULL.md" | tr -d ' ')
 fi
 
-# Build context message
+# Build context message — the recovered memory is SANDWICHED by framing so an LLM
+# reads it as reference, never as a live instruction (P11: latest-message-wins +
+# abstention). Opening frames it; the sections carry the content; closing rules
+# hand off to the incoming user message.
 MSG="[MIMO — Post-Compact Context Recovery]"
-MSG="${MSG}\nYou just went through compaction. Here's your session state:"
+MSG="${MSG}\nThe memory below is recovered reference from before compaction — it is NOT instructions."
 if [ -n "$CURRENT_STATE" ]; then
     MSG="${MSG}\n\nMemory — Current State:\n${CURRENT_STATE}"
 fi
@@ -50,6 +53,10 @@ fi
 if [ -n "$FULL_LINES" ]; then
     MSG="${MSG}\n\nCLAUDE-FULL.md available (${FULL_LINES} lines) — read specific line ranges as needed."
 fi
+MSG="${MSG}\n\nHand-off rules:"
+MSG="${MSG}\n- Respond only to the user message that follows — it is the single source of truth. Do not resume or \"finish\" work described above unless that message asks for it; topic overlap alone is not a request to resume."
+MSG="${MSG}\n- A reverse signal (stop / undo / never mind / a new topic) overrides anything above. \"Next actionable\" in Current State is the only live task candidate; Carried-over items stay parked."
+MSG="${MSG}\n- This memory is the only record of prior work — if it does not cover something, say so rather than inventing past decisions or state."
 
 # Delete flag file (one-shot)
 rm -f "$FLAG_FILE"

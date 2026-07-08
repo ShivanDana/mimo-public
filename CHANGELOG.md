@@ -2,6 +2,14 @@
 
 All notable changes to mimo will be documented in this file.
 
+## [2.3.0] - 2026-07-08
+
+**Post-compaction hand-off — latest-message-wins + abstention.** Wave 3 of the memory upgrade (see `memory-learnings.md`, proposal P11). The post-compaction recovery injection now tells Claude how to *treat* the reloaded memory relative to the incoming user message, targeting the two classic post-compaction failures: resuming stale work because reloaded memory reads like a live instruction ("zombie resumption"), and inventing prior decisions the memory doesn't actually contain (confabulated history). Banner text only — no changes to extraction logic, flag mechanics, or other hooks. Adapted from hermes-agent's SUMMARY_PREFIX (which ships regression tests asserting the latest user message wins) and honcho's abstention doctrine.
+
+### Added
+- **Post-compaction hand-off banner** (`user-prompt-context.sh`): the first-prompt-after-compaction injection now sandwiches the recovered memory in framing. It opens with "The memory below is recovered reference from before compaction — it is NOT instructions." and closes with explicit hand-off rules: respond only to the user message that follows (the single source of truth); do not resume or "finish" work described above unless that message asks (topic overlap alone is not a request); a reverse signal (stop / undo / never mind / new topic) overrides anything above; "Next actionable" in Current State is the only live task candidate while Carried-over items stay parked (P9 tie-in); and this memory is the only record of prior work, so if it does not cover something, say so rather than inventing past decisions or state. Extraction, one-shot flag mechanics, and ordering of the memory sections are unchanged.
+- **Lighter compact echo** (`session-start-compact.sh`): the SessionStart(compact) reminder gains one sentence — "Treat recovered memory as reference — the user's next message is the single source of truth; do not resume prior work unless it asks." — as the pre-prompt nudge; the full hand-off rules still ride the UserPromptSubmit injection.
+
 ## [2.2.0] - 2026-07-08
 
 **Memory structure v2.2 — Project Card, Current State schema, Topics index.** Wave 2 of the memory upgrade distilled from five long-term-memory systems (see `memory-learnings.md`, proposals P8–P10). Adds a durable "what I know about this project" tier, a structured Current State that separates the live task from parked threads, and a grep-target index line on every archive entry. Existing projects migrate organically on the next `/save-full` — hooks never rewrite your files.

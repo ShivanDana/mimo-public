@@ -218,12 +218,12 @@ mimo installs 9 hooks into Claude Code's hook system:
 |------|-------|-------------|
 | `statusline-memory.sh` | StatusLine | Colored progress bar with context %, model, cost, threshold indicators. Writes per-session state |
 | `session-start.sh` | SessionStart (startup/resume) | Creates per-session state, auto-inits project files, injects memory context, exports env vars via `CLAUDE_ENV_FILE`, cleans up dead-session state (no heartbeat in 2h) and orphaned temp files |
-| `session-start-compact.sh` | SessionStart (compact) | Lightweight context reminder after compaction, writes post-compact flag for context recovery |
+| `session-start-compact.sh` | SessionStart (compact) | Lightweight context reminder after compaction — frames recovered memory as reference (user's next message wins), writes post-compact flag for context recovery |
 | `memory-gate.sh` | Stop | Blocks Claude from stopping until memory save is complete. Includes tracked file list in save instructions, then instructs Claude to resume |
 | `precompact-save.sh` | PreCompact | Backs up full transcript + generates human-readable summary + outputs custom compact instructions |
 | `session-end-backup.sh` | SessionEnd | Final transcript backup, cleans up session state file, changes log, and post-compact flag |
 | `subagent-context.sh` | SubagentStart | Injects "Memory — Current State", the "Memory — Project Card" durable facts, and context % into subagent context |
-| `user-prompt-context.sh` | UserPromptSubmit | One-shot post-compact context recovery — injects memory state on first prompt after compaction (zero overhead normally) |
+| `user-prompt-context.sh` | UserPromptSubmit | One-shot post-compact context recovery — injects memory state on first prompt after compaction, sandwiched by hand-off rules (latest message wins, no auto-resumption, no invented history); zero overhead normally |
 | `track-changes.sh` | PostToolUse (Write\|Edit\|NotebookEdit) | Async file change tracker — appends modified file paths to per-session log |
 
 ## CLI
@@ -363,7 +363,7 @@ Yes. mimo only **appends** the memory sections to the bottom — it never rewrit
 By default (`AUTO_INIT=git-only`) mimo auto-inits only inside a git repository, and it never auto-inits in your home directory. Run `mimo init` to set up memory anywhere, or set `AUTO_INIT=always` in `~/.claude/mimo.conf`. See [Auto-initialization](#auto-initialization).
 
 **What happens when I run /compact?**
-mimo backs up the full transcript before compaction and outputs custom instructions to preserve critical context. After compaction, the session-start hook injects a reminder, and the UserPromptSubmit hook automatically injects your memory state (current focus, key decisions) on your first prompt — no need to manually read CLAUDE.md. Save flags persist across compaction.
+mimo backs up the full transcript before compaction and outputs custom instructions to preserve critical context. After compaction, the session-start hook injects a reminder, and the UserPromptSubmit hook automatically injects your memory state (current focus, key decisions) on your first prompt — no need to manually read CLAUDE.md. Save flags persist across compaction. The injected memory is framed as recovered *reference*, not instructions, with explicit hand-off rules: your next message is the single source of truth, so Claude won't auto-resume or "finish" prior work unless you ask (topic overlap alone isn't a request), and it won't invent past decisions the memory doesn't actually record.
 
 **Is my data safe when I uninstall?**
 Yes. Uninstall removes hooks, settings entries, and the CLI, but preserves all your data: `~/.claude/backups/`, `~/.claude/memory-state/`, and project `CLAUDE.md`/`CLAUDE-FULL.md` files.

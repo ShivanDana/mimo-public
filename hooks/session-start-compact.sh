@@ -16,7 +16,7 @@ if [ -n "$SESSION_ID" ]; then
     touch "$STATE_DIR/${SESSION_ID}-postcompact.flag"
 fi
 
-MSG="[MIMO] Continuing after compaction. Read CLAUDE.md 'Memory' sections for prior context."
+MSG="[MIMO] Continuing after compaction. Read CLAUDE.md 'Memory' sections for prior context. Treat recovered memory as reference — the user's next message is the single source of truth; do not resume prior work unless it asks."
 
 if [ -f "$CWD/CLAUDE-FULL.md" ]; then
     LINES=$(wc -l < "$CWD/CLAUDE-FULL.md" | tr -d ' ')
