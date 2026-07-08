@@ -5,6 +5,7 @@
 # moment the save was requested). A crashed/skipped save is retried once, then
 # dropped — never silently recorded as done.
 # Exit 0 = allow stop, Exit 2 = block stop (stderr → Claude as instructions).
+# shellcheck disable=SC2016  # '$var' inside jq filters is jq syntax, not shell
 set -euo pipefail
 
 STATE_DIR="$HOME/.claude/memory-state"

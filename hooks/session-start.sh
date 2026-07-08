@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # mimo v__VERSION__ — SessionStart hook (startup/resume)
 # Resets state for new session, auto-inits project, injects memory context into Claude
+# shellcheck disable=SC2016  # '$var' inside jq filters is jq syntax, not shell
+# shellcheck disable=SC2012  # ls -t for newest backup is fine; names are timestamped
 set -euo pipefail
 
 STATE_DIR="$HOME/.claude/memory-state"
@@ -12,6 +14,8 @@ mkdir -p "$STATE_DIR" "$BACKUP_DIR"
 AUTO_INIT=git-only
 WORKFLOW_BLOCK=off
 STALE_MINUTES=120
+CHECKPOINT_THRESHOLD=50
+FULLSAVE_THRESHOLD=80
 MIMO_CONF="${MIMO_CONF:-$HOME/.claude/mimo.conf}"
 # shellcheck disable=SC1090
 [ -f "$MIMO_CONF" ] && . "$MIMO_CONF"
@@ -47,10 +51,12 @@ fi
 
 # Export env vars for other hooks via CLAUDE_ENV_FILE
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-    echo "export MIMO_SESSION_ID=\"$SESSION_ID\"" >> "$CLAUDE_ENV_FILE"
-    echo "export MIMO_STATE_FILE=\"$STATE_FILE\"" >> "$CLAUDE_ENV_FILE"
-    echo "export MIMO_CHANGES_LOG=\"$STATE_DIR/${SESSION_ID}-changes.log\"" >> "$CLAUDE_ENV_FILE"
-    echo "export MIMO_CWD=\"$CWD\"" >> "$CLAUDE_ENV_FILE"
+    {
+        echo "export MIMO_SESSION_ID=\"$SESSION_ID\""
+        echo "export MIMO_STATE_FILE=\"$STATE_FILE\""
+        echo "export MIMO_CHANGES_LOG=\"$STATE_DIR/${SESSION_ID}-changes.log\""
+        echo "export MIMO_CWD=\"$CWD\""
+    } >> "$CLAUDE_ENV_FILE"
 fi
 
 # Clean up orphan files from dead sessions using the StatusLine heartbeat.
@@ -220,7 +226,7 @@ elif [ ! -f "$CWD/CLAUDE.md" ]; then
 fi
 
 # ─── Build context message ───────────────────────────────────────────────────
-MSG="[MIMO ACTIVE] Memory hooks enabled. Checkpoints at 50% context, full save at 80%."
+MSG="[MIMO ACTIVE] Memory hooks enabled. Checkpoints at ${CHECKPOINT_THRESHOLD}% context, full save at ${FULLSAVE_THRESHOLD}%."
 
 if [ -n "$AUTO_INIT_MSG" ]; then
     MSG="${MSG}\n${AUTO_INIT_MSG}"
@@ -230,7 +236,9 @@ fi
 # line ranges — surface the latest session number so recall is a single grep.
 if [ -f "$CWD/CLAUDE-FULL.md" ]; then
     LINES=$(wc -l < "$CWD/CLAUDE-FULL.md" | tr -d ' ')
-    LATEST_ANCHOR=$(grep -E '^## S[0-9]' "$CWD/CLAUDE-FULL.md" 2>/dev/null | tail -1 | sed -E 's/^## (S[0-9]+).*/\1/')
+    # `|| true`: a no-match grep returns 1, which would abort under set -e +
+    # pipefail — every freshly auto-initialized archive has no `## S` anchors yet.
+    LATEST_ANCHOR=$(grep -E '^## S[0-9]' "$CWD/CLAUDE-FULL.md" 2>/dev/null | tail -1 | sed -E 's/^## (S[0-9]+).*/\1/' || true)
     if [ -n "$LATEST_ANCHOR" ]; then
         MSG="${MSG}\nDeep memory archive: CLAUDE-FULL.md (${LINES} lines, latest: ${LATEST_ANCHOR}). Locate sessions with grep '^## S'."
     else

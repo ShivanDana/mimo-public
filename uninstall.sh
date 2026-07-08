@@ -2,6 +2,7 @@
 # mimo uninstaller — standalone script for removing mimo
 # Usage: curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/uninstall.sh | bash
 #    or: mimo uninstall
+# shellcheck disable=SC2059  # color codes in printf formats are intentional
 set -euo pipefail
 
 RED='\033[0;31m'

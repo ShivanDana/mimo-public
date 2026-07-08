@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # mimo — CLI for the mimo memory system for Claude Code
+# shellcheck disable=SC2059  # color codes are embedded in the printf format on purpose
 set -euo pipefail
 
 # Version is stamped by the installer (sed replaces every __VERSION__). When run
@@ -539,6 +540,7 @@ cmd_doctor() {
     if [ ! -f "$MIMO_CONF" ]; then
         dim "no mimo.conf (using built-in defaults)"
     else
+        # shellcheck disable=SC1090  # config path is user-supplied by design
         if ( set -euo pipefail; . "$MIMO_CONF" ) >/dev/null 2>&1; then
             ok "sources cleanly"
         else
@@ -603,9 +605,9 @@ cmd_doctor() {
     echo ""
     printf "${BOLD}PATH:${NC}\n"
     if echo "$PATH" | tr ':' '\n' | grep -q "^$HOME/.local/bin\$"; then
-        ok "~/.local/bin in PATH"
+        ok "\$HOME/.local/bin in PATH"
     else
-        warn "~/.local/bin not in PATH — the mimo CLI may not be found in new shells"
+        warn "\$HOME/.local/bin not in PATH — the mimo CLI may not be found in new shells"
     fi
 
     echo ""

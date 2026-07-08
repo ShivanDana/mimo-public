@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # mimo v__VERSION__ — StatusLine context detector + ANSI progress bar
 # Reads context usage from stdin JSON, writes threshold state, outputs colored bar
+# shellcheck disable=SC2016  # '$var' inside jq filters is jq syntax, not shell
 set -euo pipefail
 
 STATE_DIR="$HOME/.claude/memory-state"

@@ -6,6 +6,8 @@
 # The installer copies mimo's source files (hooks/, skills/, mimo, uninstall.sh)
 # into ~/.claude and ~/.local/bin. The repo files are the single source of truth;
 # nothing is embedded here except the settings.json hook registration (config).
+# shellcheck disable=SC2059  # color codes in printf formats are intentional
+# shellcheck disable=SC2015  # `cmd && ok || { error; exit; }` chains abort on ANY failure by design
 set -euo pipefail
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
@@ -99,7 +101,7 @@ if [ "$BASH_MAJOR" -lt 3 ]; then
 fi
 
 if [ ! -d "$HOME/.claude" ]; then
-    error "~/.claude/ not found. Install Claude Code first: https://docs.anthropic.com/en/docs/claude-code"
+    error "\$HOME/.claude/ not found. Install Claude Code first: https://docs.anthropic.com/en/docs/claude-code"
     exit 1
 fi
 
