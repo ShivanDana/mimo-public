@@ -60,6 +60,17 @@ run_ss() {
     [[ "$ctx" == *"[superseded]"* ]]
 }
 
+# P9 read rule: the banner tells Claude to act only on "Next actionable" and
+# treat Carried-over items as stale reference, and the JSON stays valid.
+@test "session-start: banner carries the Current State read rule (P9)" {
+    run_ss sess-1 "$PROJECT_DIR"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null
+    [[ "$ctx" == *"act only on"* ]]
+    [[ "$ctx" == *"Next actionable"* ]]
+    [[ "$ctx" == *"Carried-over"* ]]
+}
+
 # ── Auto-init matrix ─────────────────────────────────────────────────────────
 
 @test "auto-init git-only: initializes inside a git repo" {
@@ -69,6 +80,27 @@ run_ss() {
     [ -f "$PROJECT_DIR/CLAUDE-FULL.md" ]
     grep -q "Memory — Current State" "$PROJECT_DIR/CLAUDE.md"
     [[ "$ctx" == *"Auto-initialized"* ]]
+}
+
+# P8 + P9: a freshly auto-initialized CLAUDE.md carries the Project Card section
+# and the schema'd Current State fields — via the installed template.
+@test "auto-init: fresh CLAUDE.md has Project Card + Current State schema (template path)" {
+    ( cd "$PROJECT_DIR" && git init -q )
+    run_ss sess-1 "$PROJECT_DIR"
+    grep -q "^## Memory — Project Card" "$PROJECT_DIR/CLAUDE.md"
+    grep -q "Next actionable (verbatim):" "$PROJECT_DIR/CLAUDE.md"
+    grep -q "Carried-over (STALE" "$PROJECT_DIR/CLAUDE.md"
+}
+
+# Same, via the built-in fallback heredoc when no template is installed — the
+# two must document the identical format.
+@test "auto-init: fallback path (no template) also emits Project Card + schema" {
+    export MIMO_TEMPLATES_DIR="$TEST_HOME/no-such-templates"
+    ( cd "$PROJECT_DIR" && git init -q )
+    run_ss sess-1 "$PROJECT_DIR"
+    grep -q "^## Memory — Project Card" "$PROJECT_DIR/CLAUDE.md"
+    grep -q "Next actionable (verbatim):" "$PROJECT_DIR/CLAUDE.md"
+    grep -q "Carried-over (STALE" "$PROJECT_DIR/CLAUDE.md"
 }
 
 @test "auto-init git-only: skips a non-git directory with a hint" {

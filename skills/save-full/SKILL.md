@@ -10,17 +10,25 @@ Perform a complete memory save. Memory is reconciled, not appended — update an
 1. Read CLAUDE.md. Then run `grep -n '^## S' CLAUDE-FULL.md | tail -3` for the last session number, and `tail -30 CLAUDE-FULL.md` for the latest entry. Do NOT read the whole archive.
 2. Append a DETAILED session log to CLAUDE-FULL.md under a new anchor, and reference it from CLAUDE.md as `[CLAUDE-FULL.md §S<N>]` (legacy [L##-L##] refs stay as-is):
    - Heading `## S<N> — YYYY-MM-DD — <short-slug>`, N = last session number + 1 (S1 if none).
-   - Full work context, ALL files changed (verbatim paths) with what and why, decisions with reasoning, current state, next steps. Transient facts — commit SHAs, PR numbers, "phase N done", file counts — live HERE, never in the index.
-3. Update "Memory — Current State": today's date, current focus, live blockers only.
-4. Reconcile "Memory — Recent Sessions" and "Memory — Key Decisions" against what you just logged. Classify each candidate fact against the existing entries:
+   - Open the entry with ONE `Topics:` index line — `Topics: files=<verbatim paths>; systems=<components/areas>; decisions=<short slugs>` (omit an empty facet). Grep is the only retrieval; this line is the curated grep target.
+   - Then the full work context, ALL files changed (verbatim paths) with what and why, decisions with reasoning, current state, next steps. Transient facts — commit SHAs, PR numbers, "phase N done", file counts — live HERE, never in the index.
+3. Update "Memory — Current State" into the schema below (create the section if missing; if it is still free-form, rewrite it into these fields, preserving the content):
+   - `Last session: YYYY-MM-DD`
+   - `Focus: <one line>`
+   - `Next actionable (verbatim): "<the user's most recent unfulfilled request, in their exact words>" | None`
+   - `Blockers: <live blockers only> | None`
+   - `Carried-over (STALE — do not auto-resume): <parked threads> | None`
+   Capture "Next actionable" VERBATIM — do not paraphrase. Move a finished or abandoned focus item to Carried-over (or drop it); never leave completed work standing as the live task.
+4. Update "Memory — Project Card" (create it directly under Current State if missing). Re-emit the WHOLE card, deduplicated — entries you omit are dropped, so it self-cleans. Every line is `- PREFIX: fact` using an allowed prefix: STACK, CONVENTION, ENTRYPOINT, TOOL-RULE, FAILURE-LESSON, RELATIONSHIP, INSTRUCTION. Durable, evidence-grounded facts about THIS project only — if it plausibly changes this quarter it does not belong (behavior, tendencies, and transient state stay out). Max 30 lines; an empty card beats a volatile one.
+5. Reconcile "Memory — Recent Sessions" and "Memory — Key Decisions" against what you just logged. Classify each candidate fact against the existing entries:
    - DUPLICATE — already recorded at equal specificity → do not re-add.
    - MORE-SPECIFIC UPDATE — same topic, adds or changes detail → edit that line in place.
    - CONTRADICTION/REVERSAL — mark the old line `[superseded YYYY-MM-DD → §S<N>]`, add the new one, and write the change as one arc: "Originally X (date); changed to Y (date) because Z".
    - NEW — add.
    Never treat facts differing in numbers, dates, or key qualifiers as duplicates. Never leave two contradictory "current" facts coexisting. In the §S<N> log, note in one clause which entry you updated and why (or that none matched).
-5. Durability gate — "Memory — Key Decisions" admits only facts that will still matter in a month; if a fact is stale in a week it belongs in the §S<N> log, not the index. Convert transient observations to durable form ("Acme is in Room 105", not "currently in Room 105"). If nothing durable happened, write "(no durable learnings)" and stop — never manufacture decisions.
-6. Sweep every line already marked `[superseded …]` out of CLAUDE.md into its referenced §S<N> entry — invalidate-then-archive, never silently delete.
-7. Cap: "Memory — Recent Sessions" max 7 (drop oldest); "Memory — Key Decisions" max 10. Over 10, do NOT drop the oldest — merge overlapping entries and evict superseded and lowest-value ones (keep non-obvious decisions and reversals over routine confirmations), then add. The 10 you keep are the 10 most valuable, not the 10 most recent.
+6. Durability gate — "Memory — Key Decisions" admits only facts that will still matter in a month; if a fact is stale in a week it belongs in the §S<N> log, not the index. Convert transient observations to durable form ("Acme is in Room 105", not "currently in Room 105"). If nothing durable happened, write "(no durable learnings)" and stop — never manufacture decisions.
+7. Sweep every line already marked `[superseded …]` out of CLAUDE.md into its referenced §S<N> entry — invalidate-then-archive, never silently delete.
+8. Cap: "Memory — Recent Sessions" max 7 (drop oldest); "Memory — Key Decisions" max 10. Over 10, do NOT drop the oldest — merge overlapping entries and evict superseded and lowest-value ones (keep non-obvious decisions and reversals over routine confirmations), then add. The 10 you keep are the 10 most valuable, not the 10 most recent.
 
 Write rules (every index line):
 - One standalone subject-verb-object sentence naming its entities — verbatim file paths, function names, flags. No pronouns ("it", "the fix").

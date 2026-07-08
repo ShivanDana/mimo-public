@@ -134,3 +134,45 @@ mimo_in() {
     mimo_in "$PROJECT_DIR" doctor
     [[ "$output" == *"statusLine does NOT point at statusline-memory.sh"* ]]
 }
+
+# ── Project Card lint (P8) ───────────────────────────────────────────────────
+
+@test "cli: doctor reports a healthy Project Card with no prefix warning" {
+    printf '# CLAUDE.md\n\n## Memory — Current State\nFocus: x\n\n## Memory — Project Card\n- STACK: bash 3.2\n- TOOL-RULE: run tests with bats\n\n## Memory — Recent Sessions\n' > "$PROJECT_DIR/CLAUDE.md"
+    mimo_in "$PROJECT_DIR" doctor
+    [[ "$output" == *"Project Card prefixes valid"* ]]
+    [[ "$output" != *"lack an allowed PREFIX"* ]]
+}
+
+# A bad prefix warns but must NOT add to the failure count: run doctor with a
+# clean card and a bad card under the same (uninstalled) baseline and assert the
+# reported problem count is identical.
+@test "cli: doctor warns on a bad Project Card prefix but adds no failure" {
+    printf '# CLAUDE.md\n\n## Memory — Project Card\n- STACK: ok\n\n## X\n' > "$PROJECT_DIR/CLAUDE.md"
+    mimo_in "$PROJECT_DIR" doctor
+    local good_out="$output"
+    printf '# CLAUDE.md\n\n## Memory — Project Card\n- BADPREFIX: no\n\n## X\n' > "$PROJECT_DIR/CLAUDE.md"
+    mimo_in "$PROJECT_DIR" doctor
+    local bad_out="$output"
+    local gf bf
+    gf=$(printf '%s\n' "$good_out" | grep -oE 'found [0-9]+ problem' | grep -oE '[0-9]+' || echo 0)
+    bf=$(printf '%s\n' "$bad_out"  | grep -oE 'found [0-9]+ problem' | grep -oE '[0-9]+' || echo 0)
+    [ "$gf" = "$bf" ]
+    [[ "$bad_out" == *"lack an allowed PREFIX"* ]]
+}
+
+@test "cli: doctor warns when the Project Card exceeds 30 lines" {
+    {
+        printf '# CLAUDE.md\n\n## Memory — Project Card\n'
+        for i in $(seq 1 31); do printf -- '- STACK: fact %d\n' "$i"; done
+        printf '\n## Memory — Recent Sessions\n'
+    } > "$PROJECT_DIR/CLAUDE.md"
+    mimo_in "$PROJECT_DIR" doctor
+    [[ "$output" == *">30 — trim to durable facts"* ]]
+}
+
+@test "cli: doctor warns on a duplicated Project Card section" {
+    printf '# CLAUDE.md\n\n## Memory — Project Card\n- STACK: a\n\n## Mid\n\n## Memory — Project Card\n- STACK: b\n\n## End\n' > "$PROJECT_DIR/CLAUDE.md"
+    mimo_in "$PROJECT_DIR" doctor
+    [[ "$output" == *"appears 2 times"* ]]
+}

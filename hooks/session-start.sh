@@ -125,10 +125,16 @@ emit_memory_sections() {
     else
         cat << 'MEMORY_SECTIONS'
 ## Memory — Current State
-<!-- Updated by mimo checkpoint/save hooks -->
+<!-- Updated by mimo checkpoint/save hooks. On load act only on "Next actionable"; Carried-over is stale reference unless the user re-asks. -->
 Last session: (not yet set)
-Current focus: (not yet set)
+Focus: (not yet set)
+Next actionable (verbatim): None
 Blockers: None
+Carried-over (STALE — do not auto-resume): None
+
+## Memory — Project Card
+<!-- Durable only — if it plausibly changes this quarter, it doesn't belong. Max ~30 lines. -->
+<!-- Every line: - PREFIX: fact.  Allowed: STACK, CONVENTION, ENTRYPOINT, TOOL-RULE, FAILURE-LESSON, RELATIONSHIP, INSTRUCTION -->
 
 ## Memory — Recent Sessions
 <!-- Rolling list, max 7 entries. Oldest dropped. -->
@@ -236,6 +242,10 @@ fi
 # Memory conflict read rule (P5): the always-loaded index may hold superseded
 # lines; tell Claude how to resolve a disagreement without re-reading the archive.
 MSG="${MSG}\nMemory conflict rule: when two entries disagree, the later date wins; a line marked [superseded] is history, not current guidance. If dates cannot resolve a conflict, surface both."
+
+# Current State read rule (P9): the schema separates the live task from parked
+# threads — act on one, treat the other as reference until the user re-asks.
+MSG="${MSG}\nCurrent State read rule: on load act only on \"Next actionable\"; Carried-over items are stale reference unless the user re-asks."
 
 # Check for deep memory archive. Reference sessions by anchor (## S<N>), not
 # line ranges — surface the latest session number so recall is a single grep.

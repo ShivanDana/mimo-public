@@ -2,6 +2,19 @@
 
 All notable changes to mimo will be documented in this file.
 
+## [2.2.0] - 2026-07-08
+
+**Memory structure v2.2 — Project Card, Current State schema, Topics index.** Wave 2 of the memory upgrade distilled from five long-term-memory systems (see `memory-learnings.md`, proposals P8–P10). Adds a durable "what I know about this project" tier, a structured Current State that separates the live task from parked threads, and a grep-target index line on every archive entry. Existing projects migrate organically on the next `/save-full` — hooks never rewrite your files.
+
+### Added
+- **Project Card** (`## Memory — Project Card`): a typed, stability-gated tier between Current State and Recent Sessions holding durable facts about the project. Every line uses an allowed prefix — STACK, CONVENTION, ENTRYPOINT, TOOL-RULE, FAILURE-LESSON, RELATIONSHIP, INSTRUCTION. Durable-only ("if it plausibly changes this quarter, it doesn't belong"), max 30 lines, and re-emitted whole and deduplicated on each full save so it self-cleans; an empty card is fine. `mimo doctor` lints the cwd card (bad prefixes, >30 lines, or a duplicated section warn — never fail). `subagent-context.sh` now injects the Project Card alongside Current State so subagents get the durable project facts.
+- **Topics index line**: every new `## S<N>` archive entry in `CLAUDE-FULL.md` opens with `Topics: files=…; systems=…; decisions=…` (empty facets omitted) — a curated grep target so recall lands on the right anchor instead of hoping prose contains the keyword.
+- **Current State read rule** in the SessionStart banner: on load act only on "Next actionable"; Carried-over items are stale reference unless the user re-asks.
+
+### Changed
+- **Current State micro-schema**: the free-form body is replaced with fixed fields — `Last session`, `Focus`, `Next actionable (verbatim)`, `Blockers`, `Carried-over (STALE — do not auto-resume)`. "Next actionable" captures the user's most recent unfulfilled request in their exact words (verbatim prevents paraphrase drift); the STALE fence keeps abandoned threads from being auto-resumed. `/save-full` creates the section if missing and rewrites a still-free-form Current State into the schema, content-preserving; `/save` writes the schema but leaves the Project Card to `/save-full`.
+- **Templates + fallbacks**: `templates/claude-md-memory-sections.md`, the `session-start.sh` and `mimo` auto-init fallbacks, and both save skills document the new schema, Project Card, and Topics line in one place.
+
 ## [2.1.0] - 2026-07-08
 
 **Memory protocol v2.1 — reconciled saves.** The `/save` and `/save-full` protocols (single-sourced in `skills/save*/SKILL.md`, emitted by the `Stop` gate at threshold interrupts) now reconcile new facts against existing memory instead of appending. Prompt-text and template changes only — no hook logic changes beyond one banner line and the gate fallback. Distilled from studying five long-term-memory systems (graphiti, hindsight, honcho, cognee, hermes); see `memory-learnings.md`.

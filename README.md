@@ -81,16 +81,17 @@ flowchart TB
 
     subgraph CLAUDE["CLAUDE.md — compact index (auto-loaded)"]
         direction TB
-        CS["Current State\ndate, focus, blockers"]
+        CS["Current State\nfocus, next actionable, blockers"]
+        PC["Project Card\ndurable typed facts"]
         RS["Recent Sessions\nrolling list of 7"]
         KD["Key Decisions\none-liner summaries"]
     end
 
     subgraph FULL["CLAUDE-FULL.md — deep archive (read on demand)"]
         direction TB
-        S1["Session #1\ndetailed log"]
-        S2["Session #2\ndetailed log"]
-        SN["Session #N\ndetailed log"]
+        S1["Session #1\nTopics: + detailed log"]
+        S2["Session #2\nTopics: + detailed log"]
+        SN["Session #N\nTopics: + detailed log"]
     end
 
     RS -. "§S1" .-> S1
@@ -106,7 +107,9 @@ flowchart TB
     class FULL secondary
 ```
 
-`CLAUDE.md` entries reference sessions in `CLAUDE-FULL.md` by **anchor** (e.g., `[CLAUDE-FULL.md §S12]`). Each session is a heading `## S<N> — YYYY-MM-DD — <slug>`; Claude locates one with `grep -n '^## S' CLAUDE-FULL.md` and reads from that line — no need to load the whole archive. Anchors don't rot when the archive is edited, unlike the line ranges older versions used. Run `mimo sessions` to list every anchor in the current project.
+`CLAUDE.md` entries reference sessions in `CLAUDE-FULL.md` by **anchor** (e.g., `[CLAUDE-FULL.md §S12]`). Each session is a heading `## S<N> — YYYY-MM-DD — <slug>` and opens with one `Topics: files=…; systems=…; decisions=…` index line — grep is the only retrieval, so this curated line is the grep target that lands recall on the right anchor. Claude locates a session with `grep -n '^## S' CLAUDE-FULL.md` and reads from that line — no need to load the whole archive. Anchors don't rot when the archive is edited, unlike the line ranges older versions used. Run `mimo sessions` to list every anchor in the current project.
+
+Between the fast-moving **Current State** and the episodic Recent Sessions sits the **Project Card** — a durable "what I know about this project" tier. Every line is a typed fact with an allowed prefix (`STACK`, `CONVENTION`, `ENTRYPOINT`, `TOOL-RULE`, `FAILURE-LESSON`, `RELATIONSHIP`, `INSTRUCTION`), it holds only facts that will still be true next quarter, and a full save re-emits it whole and deduplicated so it self-cleans. Current State itself is a small schema — `Focus`, a **verbatim** `Next actionable` (the user's exact latest request), live `Blockers`, and a STALE-fenced `Carried-over` for parked threads; the injected read rule is "act only on Next actionable, treat Carried-over as reference unless the user re-asks."
 
 When a decision changes, the old index line is marked `[superseded YYYY-MM-DD → §S12]` rather than deleted, and the reversal is written as one arc ("Originally X; changed to Y because Z"). The reading rule, injected into every session's context, is **latest-wins**: when two entries disagree the later date wins, a `[superseded]` line is history rather than current guidance, and a conflict that dates can't resolve surfaces both. Superseded lines are swept into their `§S<N>` archive entry on the next full save (invalidate-then-archive), so the index stays current while history is preserved.
 
@@ -201,7 +204,7 @@ On session start, mimo can auto-create `CLAUDE.md` and `CLAUDE-FULL.md`. This is
 
 A **hard `$HOME` guard** applies in every mode: mimo will never auto-create a `CLAUDE.md` in your home directory, because a file there loads into *every* Claude Code session (cross-project contamination). When auto-init is skipped and no `CLAUDE.md` exists, mimo injects a one-line hint to run `mimo init`.
 
-A freshly created `CLAUDE.md` contains the title, a one-line description, and the three Memory sections — nothing else. Set `WORKFLOW_BLOCK=on` (or run `mimo init --with-workflow`) to also include the opinionated "Workflow Orchestration" block. If a `CLAUDE.md` already exists, mimo only **appends** the memory sections and never rewrites the top of your file. Idempotent — running twice produces the same result.
+A freshly created `CLAUDE.md` contains the title, a one-line description, and the four Memory sections — schema'd Current State, an empty Project Card, Recent Sessions, and Key Decisions — nothing else. Set `WORKFLOW_BLOCK=on` (or run `mimo init --with-workflow`) to also include the opinionated "Workflow Orchestration" block. If a `CLAUDE.md` already exists, mimo only **appends** the memory sections and never rewrites the top of your file. Existing projects on the older layout migrate organically: the next `/save-full` rewrites a free-form Current State into the schema and creates the Project Card — hooks never rewrite your files. Idempotent — running twice produces the same result.
 
 `CLAUDE-FULL.md` is created as an empty deep archive.
 
@@ -219,7 +222,7 @@ mimo installs 9 hooks into Claude Code's hook system:
 | `memory-gate.sh` | Stop | Blocks Claude from stopping until memory save is complete. Includes tracked file list in save instructions, then instructs Claude to resume |
 | `precompact-save.sh` | PreCompact | Backs up full transcript + generates human-readable summary + outputs custom compact instructions |
 | `session-end-backup.sh` | SessionEnd | Final transcript backup, cleans up session state file, changes log, and post-compact flag |
-| `subagent-context.sh` | SubagentStart | Injects "Memory — Current State" and context % into subagent context |
+| `subagent-context.sh` | SubagentStart | Injects "Memory — Current State", the "Memory — Project Card" durable facts, and context % into subagent context |
 | `user-prompt-context.sh` | UserPromptSubmit | One-shot post-compact context recovery — injects memory state on first prompt after compaction (zero overhead normally) |
 | `track-changes.sh` | PostToolUse (Write\|Edit\|NotebookEdit) | Async file change tracker — appends modified file paths to per-session log |
 
@@ -350,6 +353,9 @@ Different job. mimo's memory lives in your project as plain `CLAUDE.md` / `CLAUD
 **How does mimo avoid stale or duplicated memory?**
 Every save reconciles before it writes. Each new fact is classified against the existing entries — a duplicate is skipped, a more-specific version edits the existing line in place, and a contradiction marks the old line `[superseded YYYY-MM-DD → §S12]` and adds the new one, so two conflicting "current" facts never coexist and the same fact is never recorded twice. A **durability gate** keeps the always-loaded index lean: only facts that will still matter in a month are indexed, while transient details (SHAs, PR numbers, file counts) stay in the `CLAUDE-FULL.md` archive — and if nothing durable happened, the save writes "(no durable learnings)" instead of inventing one. When the Key Decisions list passes 10 entries, mimo consolidates by **merit** (merging overlaps, evicting superseded and lowest-value lines) rather than dropping the oldest. On read, a **latest-wins** rule resolves any remaining conflict: the later-dated entry stands, and a `[superseded]` line is treated as history. This protocol was distilled from studying five long-term-memory systems — graphiti, hindsight, honcho, cognee, and hermes (see `memory-learnings.md`).
 
+**What is the Project Card?**
+A durable "what I know about this project" tier in `CLAUDE.md`, between Current State and Recent Sessions. Each line is a typed fact prefixed with one of `STACK`, `CONVENTION`, `ENTRYPOINT`, `TOOL-RULE`, `FAILURE-LESSON`, `RELATIONSHIP`, or `INSTRUCTION` (e.g. `- TOOL-RULE: never run bun test directly — use make test`). It holds only facts that will still be true next quarter — behavior, tendencies, and transient state stay out — and a full save re-emits the whole card deduplicated, so entries you no longer include simply drop off and it self-cleans. An empty card is fine; prefer empty over volatile. `mimo doctor` lints it (bad prefixes or more than 30 lines warn, never fail). It exists so a fresh session — and every subagent — gets the stable project facts without re-deriving them.
+
 **Does mimo work with an existing CLAUDE.md?**
 Yes. mimo only **appends** the memory sections to the bottom — it never rewrites the top of your file, so your existing content stays byte-for-byte intact. (This is a change from older versions, which prepended a workflow block and could duplicate the `# CLAUDE.md` title.)
 
@@ -384,7 +390,7 @@ Yes. When the stop hook triggers at 50% or 80%, Claude performs the save and the
 The stop hook verifies saves by evidence, not trust: it records when it asked for a save and only marks it done once `CLAUDE.md`'s modification time advances past that moment (or Claude says "checkpoint saved" / "memory saved"). If a save crashes or is skipped, the hook retries the request exactly once on the next stop. If the second attempt still shows no write to `CLAUDE.md`, mimo gives up and lets the session continue — it never blocks you forever waiting on a save that isn't happening, and it never records a save that didn't happen as done.
 
 **Do subagents know about mimo?**
-Yes. The SubagentStart hook automatically injects "Memory — Current State" and the parent session's context % into every subagent. Subagents can see what you're working on and how much context remains without any extra configuration.
+Yes. The SubagentStart hook automatically injects "Memory — Current State", the "Memory — Project Card" durable facts, and the parent session's context % into every subagent. Subagents can see what you're working on, the project's stack/conventions/tool-rules, and how much context remains without any extra configuration.
 
 **Are file changes tracked?**
 Yes. The PostToolUse hook runs asynchronously after every Write or Edit operation and appends the file path to a per-session changes log. When a checkpoint or full save is triggered, the save instructions include the full list of files modified in the session, so nothing is forgotten.

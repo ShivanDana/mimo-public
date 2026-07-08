@@ -15,10 +15,14 @@ if [ -z "$STATE_FILE" ]; then
     STATE_FILE="$HOME/.claude/memory-state/${SESSION_ID}.json"
 fi
 
-# Extract "Memory — Current State" section from CLAUDE.md (max 10 lines)
+# Extract "Memory — Current State" and "Memory — Project Card" from CLAUDE.md.
+# `|| true` on each pipeline: `head` closing early can SIGPIPE the sed producer,
+# which would abort the hook under `set -euo pipefail`.
 MEMORY_STATE=""
+PROJECT_CARD=""
 if [ -f "$CWD/CLAUDE.md" ]; then
-    MEMORY_STATE=$(sed -n '/^## Memory — Current State/,/^## /{/^## Memory — Current State/d;/^## /d;p;}' "$CWD/CLAUDE.md" | head -10)
+    MEMORY_STATE=$(sed -n '/^## Memory — Current State/,/^## /{/^## Memory — Current State/d;/^## /d;p;}' "$CWD/CLAUDE.md" | head -10 || true)
+    PROJECT_CARD=$(sed -n '/^## Memory — Project Card/,/^## /{/^## Memory — Project Card/d;/^## /d;p;}' "$CWD/CLAUDE.md" | head -30 || true)
 fi
 
 # Read context % from state file
@@ -28,7 +32,7 @@ if [ -f "$STATE_FILE" ]; then
 fi
 
 # If no useful info, exit silently
-if [ -z "$MEMORY_STATE" ] && [ -z "$CTX_PCT" ]; then
+if [ -z "$MEMORY_STATE" ] && [ -z "$PROJECT_CARD" ] && [ -z "$CTX_PCT" ]; then
     exit 0
 fi
 
@@ -39,6 +43,9 @@ if [ -n "$CTX_PCT" ]; then
 fi
 if [ -n "$MEMORY_STATE" ]; then
     MSG="${MSG}\nMemory — Current State:\n${MEMORY_STATE}"
+fi
+if [ -n "$PROJECT_CARD" ]; then
+    MSG="${MSG}\nMemory — Project Card:\n${PROJECT_CARD}"
 fi
 
 jq -n --arg ctx "$(echo -e "$MSG")" \

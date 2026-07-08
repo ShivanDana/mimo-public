@@ -99,6 +99,28 @@ teardown() { mimo_teardown; }
     [[ "$output" == *"invalidate-then-archive"* ]]
 }
 
+# v2.2 (Wave 2): the emitted protocol carries the Topics index line, the P9
+# Current State schema, and — for full save — the Project Card re-emit step.
+@test "gate: fullsave emission carries Topics, Current State schema, and Project Card" {
+    seed_state "$MIMO_STATE_FILE" threshold=fullsave_needed percentage=85
+    run bash "$GATE" <<<"$(hook_json sess-1 "$MIMO_CWD")"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"Topics:"* ]]
+    [[ "$output" == *"Next actionable (verbatim)"* ]]
+    [[ "$output" == *"Memory — Project Card"* ]]
+    [[ "$output" == *"STACK"* ]]
+}
+
+@test "gate: checkpoint emission carries the Topics line and Current State schema" {
+    seed_state "$MIMO_STATE_FILE" threshold=checkpoint_needed percentage=55
+    run bash "$GATE" <<<"$(hook_json sess-1 "$MIMO_CWD")"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"Topics:"* ]]
+    [[ "$output" == *"Next actionable (verbatim)"* ]]
+    # Checkpoint defers the card to /save-full but names it so.
+    [[ "$output" == *"Project Card"* ]]
+}
+
 # Budget: each SKILL.md stays well within the instruction budget (65-line target,
 # 80-line ceiling) so the protocol never balloons the gate emission.
 @test "gate: skill files stay within the line budget" {

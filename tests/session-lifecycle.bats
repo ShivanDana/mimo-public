@@ -155,6 +155,32 @@ teardown() { mimo_teardown; }
     [ -z "$output" ]
 }
 
+# P8: subagents get the durable Project Card facts alongside Current State.
+@test "subagent: injects Memory — Project Card when present" {
+    printf '## Memory — Current State\nFocus: shipping v2\n\n## Memory — Project Card\n- STACK: bash 3.2, jq\n- TOOL-RULE: run tests with bats tests/\n\n## Memory — Recent Sessions\n' > "$PROJECT_DIR/CLAUDE.md"
+    export MIMO_STATE_FILE="$STATE_DIR/s1.json"
+    seed_state "$MIMO_STATE_FILE" percentage=33
+    run bash "$SUBAGENT" <<<"$(hook_json s1 "$PROJECT_DIR")"
+    [ "$status" -eq 0 ]
+    ctx="$(echo "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+    [[ "$ctx" == *"Memory — Project Card"* ]]
+    [[ "$ctx" == *"STACK: bash 3.2, jq"* ]]
+    [[ "$ctx" == *"TOOL-RULE: run tests with bats"* ]]
+    [[ "$ctx" == *"Focus: shipping v2"* ]]
+}
+
+# No card present → Current State still injected, no empty Project Card block.
+@test "subagent: works with Current State only (no Project Card section)" {
+    printf '## Memory — Current State\nFocus: no card here\n\n## Next\n' > "$PROJECT_DIR/CLAUDE.md"
+    export MIMO_STATE_FILE="$STATE_DIR/s1.json"
+    seed_state "$MIMO_STATE_FILE" percentage=10
+    run bash "$SUBAGENT" <<<"$(hook_json s1 "$PROJECT_DIR")"
+    [ "$status" -eq 0 ]
+    ctx="$(echo "$output" | jq -r '.hookSpecificOutput.additionalContext')"
+    [[ "$ctx" == *"Focus: no card here"* ]]
+    [[ "$ctx" != *"Memory — Project Card"* ]]
+}
+
 # ── precompact-save.sh ───────────────────────────────────────────────────────
 
 @test "precompact: backs up transcript, writes a summary, emits PreCompact JSON" {
