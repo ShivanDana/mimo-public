@@ -109,6 +109,7 @@ done
 echo ""
 warn "Preserved (your data):"
 echo "  ~/.claude/mimo.conf      — your configuration"
+echo "  ~/.claude/mimo-user.md   — your cross-project user profile"
 echo "  ~/.claude/backups/       — transcript backups"
 echo "  ~/.claude/memory-state/  — session state"
 echo "  Project CLAUDE.md and CLAUDE-FULL.md files"

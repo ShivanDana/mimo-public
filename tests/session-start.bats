@@ -20,7 +20,7 @@ run_ss() {
     run_ss sess-new "$PROJECT_DIR"
     [ "$status" -eq 0 ]
     [ -f "$STATE_DIR/sess-new.json" ]
-    for k in session_id percentage threshold checkpoint_done fullsave_done save_requested_at save_attempts pending_save_kind; do
+    for k in session_id percentage threshold checkpoint_done fullsave_done save_requested_at save_attempts pending_save_kind changes_at_save; do
         run jq -e "has(\"$k\")" "$STATE_DIR/sess-new.json"
         [ "$status" -eq 0 ]
     done

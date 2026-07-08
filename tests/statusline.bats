@@ -90,7 +90,7 @@ teardown() { mimo_teardown; }
     run bash "$SL" <<<"$(statusline_json 10)"
     [ -f "$MIMO_STATE_FILE" ]
     # All gate + statusline fields present.
-    for k in session_id percentage threshold checkpoint_done fullsave_done save_requested_at save_attempts pending_save_kind; do
+    for k in session_id percentage threshold checkpoint_done fullsave_done save_requested_at save_attempts pending_save_kind changes_at_save; do
         run jq -e "has(\"$k\")" "$MIMO_STATE_FILE"
         [ "$status" -eq 0 ]
     done

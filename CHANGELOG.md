@@ -2,6 +2,19 @@
 
 All notable changes to mimo will be documented in this file.
 
+## [2.4.0] - 2026-07-08
+
+**User profile + file-change save trigger.** Wave 4 of the memory upgrade (see `memory-learnings.md`, proposals P12–P13). Adds the one memory class per-project files can't hold — *how the user works*, shared across every repo — and closes the gap where a session doing heavy work at low context could end with nothing saved. Both features reuse existing machinery: the profile rides the save skills and the `additionalContext` injection path; the trigger is a new term in the statusline's existing threshold derivation (the single arming owner), with the gate only resetting the baseline.
+
+### Added
+- **Cross-project user profile** (`~/.claude/mimo-user.md`): a small, mimo-owned file capturing project-independent preferences and standing expectations, injected into every session under a "User profile (applies across projects)" header (`session-start.sh`, gated by `USER_PROFILE=on`/`off`). Every line is a typed, dated, **declarative** fact — `PREFERENCE`, `WORKFLOW`, `INSTRUCTION`, `CONTEXT` — describing the user, never a command to the agent (the declarative-only rule is also the injection defense); capped at 20 lines / ~1,400 chars. It self-materializes: `/save-full` writes it only when a session shows profile signal and skips silently otherwise, so no file means no injection and zero cost. Subagents receive just the `INSTRUCTION` lines (`subagent-context.sh`) — the standing rules they most often violate. It is **not** `~/CLAUDE.md` (the `$HOME` guard is untouched), is per-machine, and **survives uninstall**. `mimo doctor` lints it (bad prefixes, >20 lines, or >1,600 chars warn — never fail); `mimo status` reports whether it's present.
+- **File-change save trigger** (`statusline-memory.sh`): mimo now arms a **checkpoint** after `SAVE_AFTER_CHANGES` file-change events since the last save (default 40, `0` disables), independent of context %. It counts raw Write/Edit events — capturing both breadth (many files) and depth (a long grind on two files) — and is **recurring**: every further 40 changes re-arm it. It only ever arms a checkpoint, never a full save. A new `changes_at_save` state field records the baseline; the `Stop` gate resets it on a verified save or a durable give-up (its disarm), preserving the "at most two emissions per crossing" invariant. The statusline remains the single owner of threshold arming.
+
+### Changed
+- **`track-changes.sh` excludes memory files**: `CLAUDE.md`, `CLAUDE-FULL.md`, and `mimo-user.md` are no longer logged — a save Writes those, which would otherwise feed the counter that triggers saves (saves triggering saves). Side benefit: the gate's tracked-files list stops presenting memory files as "work".
+- **`/save-full`** gains a user-profile review step (after the Project Card step); `/save` is unchanged (profile churn should be rare, so checkpoints skip it). Both save skills stay within the instruction budget.
+- **Config**: `SAVE_AFTER_CHANGES=40` and `USER_PROFILE=on` added to the `mimo.conf` template (commented) and the `mimo doctor` known-keys list. `uninstall.sh` lists `~/.claude/mimo-user.md` among preserved user data.
+
 ## [2.3.0] - 2026-07-08
 
 **Post-compaction hand-off — latest-message-wins + abstention.** Wave 3 of the memory upgrade (see `memory-learnings.md`, proposal P11). The post-compaction recovery injection now tells Claude how to *treat* the reloaded memory relative to the incoming user message, targeting the two classic post-compaction failures: resuming stale work because reloaded memory reads like a live instruction ("zombie resumption"), and inventing prior decisions the memory doesn't actually contain (confabulated history). Banner text only — no changes to extraction logic, flag mechanics, or other hooks. Adapted from hermes-agent's SUMMARY_PREFIX (which ships regression tests asserting the latest user message wins) and honcho's abstention doctrine.

@@ -18,6 +18,7 @@ STATE_DIR="$HOME/.claude/memory-state"
 BACKUP_DIR="$HOME/.claude/backups"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 TEMPLATES_DIR="${MIMO_TEMPLATES_DIR:-$HOME/.claude/mimo-templates}"
+USER_PROFILE_FILE="${MIMO_USER_PROFILE_FILE:-$HOME/.claude/mimo-user.md}"
 
 # ─── Config (defaults, then user overrides via ~/.claude/mimo.conf) ──────────
 CHECKPOINT_THRESHOLD=50
@@ -123,6 +124,15 @@ cmd_status() {
         fi
     else
         dim "defaults (no ~/.claude/mimo.conf)"
+    fi
+
+    echo ""
+    printf "${BOLD}User profile:${NC}\n"
+    if [ -f "$USER_PROFILE_FILE" ]; then
+        PLINES=$(wc -l < "$USER_PROFILE_FILE" 2>/dev/null | tr -d '[:space:]' || echo 0)
+        ok "present (${PLINES} lines)"
+    else
+        dim "absent (written on the first /save-full with cross-project signal)"
     fi
 
     echo ""
@@ -553,7 +563,7 @@ cmd_doctor() {
             fail "mimo.conf fails to source (syntax error) — hooks may break"
             fails=$((fails + 1))
         fi
-        KNOWN="CHECKPOINT_THRESHOLD FULLSAVE_THRESHOLD BAR_WIDTH AUTO_INIT WORKFLOW_BLOCK BACKUP_RETENTION_DAYS STALE_MINUTES"
+        KNOWN="CHECKPOINT_THRESHOLD FULLSAVE_THRESHOLD BAR_WIDTH AUTO_INIT WORKFLOW_BLOCK BACKUP_RETENTION_DAYS STALE_MINUTES SAVE_AFTER_CHANGES USER_PROFILE"
         CONF_KEYS=$(grep -E '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' "$MIMO_CONF" 2>/dev/null \
             | sed -E 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=.*/\1/' || true)
         UNKNOWN=""
@@ -644,6 +654,36 @@ CARD_LINT
             ok "Project Card prefixes valid (${CARD_TOTAL} lines)"
         fi
         [ "$CARD_TOTAL" -gt 30 ] && warn "Project Card has ${CARD_TOTAL} lines (>30 — trim to durable facts)"
+    fi
+
+    # ── User profile lint (P12) ──────────────────────────────────────────────
+    # Only when the file exists. All findings are warnings — a malformed profile
+    # degrades the injected context, it does not break the system. Every bullet
+    # must carry an allowed prefix (a bare imperative like "- always X" fails this
+    # check, which is the declarative-only injection defense); warn over 20 lines
+    # or 1,600 chars.
+    if [ -f "$USER_PROFILE_FILE" ]; then
+        echo ""
+        printf "${BOLD}User profile (${USER_PROFILE_FILE}):${NC}\n"
+        PROF_LINES=$(wc -l < "$USER_PROFILE_FILE" 2>/dev/null | tr -d '[:space:]' || echo 0)
+        case "${PROF_LINES:-0}" in ''|*[!0-9]*) PROF_LINES=0 ;; esac
+        PROF_CHARS=$(wc -c < "$USER_PROFILE_FILE" 2>/dev/null | tr -d '[:space:]' || echo 0)
+        case "${PROF_CHARS:-0}" in ''|*[!0-9]*) PROF_CHARS=0 ;; esac
+        PROF_BAD=0
+        PROF_TOTAL=0
+        while IFS= read -r line; do
+            case "$line" in "- "*) ;; *) continue ;; esac
+            PROF_TOTAL=$((PROF_TOTAL + 1))
+            echo "$line" | grep -qE '^- (PREFERENCE|WORKFLOW|INSTRUCTION|CONTEXT):' \
+                || PROF_BAD=$((PROF_BAD + 1))
+        done < "$USER_PROFILE_FILE"
+        if [ "$PROF_BAD" -gt 0 ]; then
+            warn "${PROF_BAD} profile line(s) lack an allowed PREFIX (PREFERENCE/WORKFLOW/INSTRUCTION/CONTEXT)"
+        else
+            ok "profile prefixes valid (${PROF_TOTAL} entries)"
+        fi
+        [ "$PROF_LINES" -gt 20 ]   && warn "profile has ${PROF_LINES} lines (>20 — trim to the highest-value facts)"
+        [ "$PROF_CHARS" -gt 1600 ] && warn "profile is ${PROF_CHARS} chars (>1600 — trim)"
     fi
 
     echo ""

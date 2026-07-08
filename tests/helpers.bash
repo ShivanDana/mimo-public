@@ -38,7 +38,7 @@ mimo_setup() {
     # The live session exports some of these — a leaked value would point a hook
     # at the real install. Clear them all; tests set what they need explicitly.
     unset MIMO_STATE_FILE MIMO_CHANGES_LOG MIMO_SESSION_ID MIMO_CWD MIMO_CONF \
-          MIMO_SKILLS_DIR MIMO_TEMPLATES_DIR CLAUDE_ENV_FILE
+          MIMO_SKILLS_DIR MIMO_TEMPLATES_DIR MIMO_USER_PROFILE_FILE CLAUDE_ENV_FILE
 
     mkdir -p "$HOME/.claude"
     STATE_DIR="$HOME/.claude/memory-state"
@@ -87,7 +87,7 @@ hook_json() {
 # Write a state JSON file. $1=path, remaining key=value pairs merged via jq.
 seed_state() {
     local path="$1"; shift
-    local base='{session_id:"sess-1", percentage:0, threshold:"clean", checkpoint_done:false, fullsave_done:false, save_requested_at:0, save_attempts:0, pending_save_kind:""}'
+    local base='{session_id:"sess-1", percentage:0, threshold:"clean", checkpoint_done:false, fullsave_done:false, save_requested_at:0, save_attempts:0, pending_save_kind:"", changes_at_save:0}'
     local filter="$base"
     local args=()
     while [ "$#" -gt 0 ]; do

@@ -19,6 +19,14 @@ fi
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // .tool_input.path // ""')
 [ -z "$FILE_PATH" ] && exit 0
 
+# Exclude mimo's own memory files by basename (P13). A save Writes CLAUDE.md /
+# CLAUDE-FULL.md / mimo-user.md — logging those would feed the counter that
+# triggers saves (saves triggering saves). It also stops the gate's tracked-files
+# list from presenting memory files as "work".
+case "$(basename "$FILE_PATH")" in
+    CLAUDE.md|CLAUDE-FULL.md|mimo-user.md) exit 0 ;;
+esac
+
 # Ensure the state dir exists — PostToolUse can fire before SessionStart on a fast first edit
 mkdir -p "$(dirname "$CHANGES_LOG")"
 

@@ -113,6 +113,15 @@ Between the fast-moving **Current State** and the episodic Recent Sessions sits 
 
 When a decision changes, the old index line is marked `[superseded YYYY-MM-DD → §S12]` rather than deleted, and the reversal is written as one arc ("Originally X; changed to Y because Z"). The reading rule, injected into every session's context, is **latest-wins**: when two entries disagree the later date wins, a `[superseded]` line is history rather than current guidance, and a conflict that dates can't resolve surfaces both. Superseded lines are swept into their `§S<N>` archive entry on the next full save (invalidate-then-archive), so the index stays current while history is preserved.
 
+### Cross-project user profile
+
+Project memory can't hold the one thing that's true everywhere: **how you work** — preferences and standing expectations that shouldn't be relearned in every repo. mimo keeps those in `~/.claude/mimo-user.md`, a small, mimo-owned file injected into *every* session under a "User profile (applies across projects)" header.
+
+- It's **self-materializing**: it doesn't exist until a `/save-full` first finds something worth writing (most sessions have nothing — the save skips it silently). No file means no injection and zero cost.
+- Every line is a typed, dated, **declarative** fact with an allowed prefix — `PREFERENCE` (how you like output), `WORKFLOW` (process expectations), `INSTRUCTION` (standing rules you stated, like "never push without asking"), `CONTEXT` (stable role/expertise facts). Facts about *you*, never commands to the agent — that declarative-only rule is also the injection-hardening. Capped at **20 lines / ~1,400 chars** because it loads into every session.
+- Subagents get just the `INSTRUCTION` lines — the standing rules they're most likely to violate.
+- It is **not** `~/CLAUDE.md` (the absolute `$HOME` guard is untouched), it's **per-machine** (copy the file to another machine if you want it there), it **survives uninstall**, and `USER_PROFILE=off` disables the injection without deleting the file. `mimo doctor` lints it (bad prefixes / oversize warn, never fail); `mimo status` shows whether it's present.
+
 ### Session lifecycle
 
 ```mermaid
@@ -178,6 +187,8 @@ The status line tracks context window usage in real time:
 
 The stop hook blocks Claude from ending a turn until the required save is complete.
 
+**File-change trigger.** Context % isn't the only signal. A session doing heavy work at low context — many small edits, or subagent-heavy workflows where the main window stays lean — could otherwise end with nothing written. So mimo also arms a **checkpoint** after `SAVE_AFTER_CHANGES` file-change events since the last save (default **40**, `0` disables). It counts raw Write/Edit events (not unique files), so it catches both breadth (many files) and depth (a long grind on two files). It is **recurring** — every further 40 changes re-arm it — and it only ever arms a checkpoint, never a full save; combined with the "(no durable learnings)" escape, a triggered checkpoint on an uninteresting session costs just a few lines of Current State. The statusline is the single owner of this arming (it recomputes the threshold on every render), exactly like the context-% thresholds, so the same give-up and verification guarantees apply.
+
 **Verified saves.** The stop hook does not take Claude's word for it. When a threshold is crossed it records the request time and blocks; on the next stop it confirms the save actually happened by checking that `CLAUDE.md`'s modification time advanced past the request time (a phrase like "checkpoint saved" is accepted as a secondary signal). Only then are the done flags set. A crashed or skipped save is retried once; if the second attempt still shows no write, mimo gives up and lets the session continue rather than blocking forever. Evidence, not trust.
 
 **Reconciled writes.** A save doesn't just append. Before writing to the index, each new fact is classified against the existing entries — duplicate (skip), more-specific update (edit the line in place), contradiction (mark the old line `[superseded …]` and add the new one), or genuinely new (add) — so the index never accumulates duplicates or two conflicting "current" facts. A **durability gate** keeps the always-loaded index lean: only facts that will still matter in a month go in, while transient details (commit SHAs, PR numbers, file counts, "phase N done") stay in the detailed `CLAUDE-FULL.md` log. If nothing durable happened, the save records "(no durable learnings)" rather than manufacturing a decision. At more than 10 Key Decisions, mimo consolidates by merit — merging and evicting the lowest-value entries — instead of dropping the oldest.
@@ -216,15 +227,15 @@ mimo installs 9 hooks into Claude Code's hook system:
 
 | Hook | Event | What it does |
 |------|-------|-------------|
-| `statusline-memory.sh` | StatusLine | Colored progress bar with context %, model, cost, threshold indicators. Writes per-session state |
-| `session-start.sh` | SessionStart (startup/resume) | Creates per-session state, auto-inits project files, injects memory context, exports env vars via `CLAUDE_ENV_FILE`, cleans up dead-session state (no heartbeat in 2h) and orphaned temp files |
+| `statusline-memory.sh` | StatusLine | Colored progress bar with context %, model, cost, threshold indicators. Writes per-session state and arms saves (context % **and** the file-change trigger) |
+| `session-start.sh` | SessionStart (startup/resume) | Creates per-session state, auto-inits project files, injects memory context (incl. the cross-project user profile), exports env vars via `CLAUDE_ENV_FILE`, cleans up dead-session state (no heartbeat in 2h) and orphaned temp files |
 | `session-start-compact.sh` | SessionStart (compact) | Lightweight context reminder after compaction — frames recovered memory as reference (user's next message wins), writes post-compact flag for context recovery |
 | `memory-gate.sh` | Stop | Blocks Claude from stopping until memory save is complete. Includes tracked file list in save instructions, then instructs Claude to resume |
 | `precompact-save.sh` | PreCompact | Backs up full transcript + generates human-readable summary + outputs custom compact instructions |
 | `session-end-backup.sh` | SessionEnd | Final transcript backup, cleans up session state file, changes log, and post-compact flag |
-| `subagent-context.sh` | SubagentStart | Injects "Memory — Current State", the "Memory — Project Card" durable facts, and context % into subagent context |
+| `subagent-context.sh` | SubagentStart | Injects "Memory — Current State", the "Memory — Project Card" durable facts, context %, and the user profile's standing `INSTRUCTION` rules into subagent context |
 | `user-prompt-context.sh` | UserPromptSubmit | One-shot post-compact context recovery — injects memory state on first prompt after compaction, sandwiched by hand-off rules (latest message wins, no auto-resumption, no invented history); zero overhead normally |
-| `track-changes.sh` | PostToolUse (Write\|Edit\|NotebookEdit) | Async file change tracker — appends modified file paths to per-session log |
+| `track-changes.sh` | PostToolUse (Write\|Edit\|NotebookEdit) | Async file change tracker — appends modified file paths to per-session log (skips mimo's own memory files); the count feeds the file-change save trigger |
 
 ## CLI
 
@@ -255,6 +266,7 @@ mimo uninstall   # Remove mimo (preserves your memory data)
 | `~/.claude/skills/pcompact/SKILL.md` | `/pcompact` slash command | Install |
 | `~/.claude/settings.json` | Hook + statusline registration (merged) | Install |
 | `~/.claude/mimo.conf` | Your configuration (sourced by hooks + CLI; preserved across updates) | Install (seeded, commented) |
+| `~/.claude/mimo-user.md` | Cross-project user profile (injected every session; per-machine; preserved across updates + uninstall) | First `/save-full` with profile signal |
 | `~/.claude/mimo-templates/` | mimo-managed `CLAUDE.md` scaffolding (memory sections, workflow block, archive) | Install |
 | `~/.claude/memory-state/<session-id>.json` | Per-session state (context %, thresholds, flags) | Each session |
 | `~/.claude/memory-state/<session-id>-changes.log` | Per-session file change tracker | During sessions |
@@ -284,6 +296,9 @@ All customization lives in one file: **`~/.claude/mimo.conf`**. Do **not** edit 
 
 #BACKUP_RETENTION_DAYS=30  # delete transcript backups older than this
 #STALE_MINUTES=120         # a session idle this long (no heartbeat) is "stale"
+
+#SAVE_AFTER_CHANGES=40     # arm a checkpoint after this many file changes (0 = off)
+#USER_PROFILE=on           # on | off — inject ~/.claude/mimo-user.md every session
 ```
 
 Run `mimo status` to see the active config — it reports either `defaults (no ~/.claude/mimo.conf)` or the exact keys you've overridden. Lower the thresholds (e.g. `5` / `15`) to exercise saves quickly while testing.
@@ -356,6 +371,9 @@ Every save reconciles before it writes. Each new fact is classified against the 
 **What is the Project Card?**
 A durable "what I know about this project" tier in `CLAUDE.md`, between Current State and Recent Sessions. Each line is a typed fact prefixed with one of `STACK`, `CONVENTION`, `ENTRYPOINT`, `TOOL-RULE`, `FAILURE-LESSON`, `RELATIONSHIP`, or `INSTRUCTION` (e.g. `- TOOL-RULE: never run bun test directly — use make test`). It holds only facts that will still be true next quarter — behavior, tendencies, and transient state stay out — and a full save re-emits the whole card deduplicated, so entries you no longer include simply drop off and it self-cleans. An empty card is fine; prefer empty over volatile. `mimo doctor` lints it (bad prefixes or more than 30 lines warn, never fail). It exists so a fresh session — and every subagent — gets the stable project facts without re-deriving them.
 
+**What is the cross-project user profile?**
+A small file, `~/.claude/mimo-user.md`, that holds how *you* work — project-independent preferences and standing expectations — so they aren't relearned in every repo. It's injected into every session under a "User profile (applies across projects)" header. Each line is a typed, dated, declarative fact with a prefix (`PREFERENCE`, `WORKFLOW`, `INSTRUCTION`, `CONTEXT`) describing you, never a command to the agent, capped at 20 lines. It's written automatically by `/save-full` when a session actually shows profile signal (most don't — it's skipped silently), so it self-materializes and doesn't exist until there's something worth writing. It's **per-machine** (copy it over if you want it elsewhere), it **survives uninstall**, and you can edit it by hand or disable the injection with `USER_PROFILE=off` in `~/.claude/mimo.conf` (which never deletes the file). It's distinct from `~/CLAUDE.md` — mimo never touches your home-directory CLAUDE.md.
+
 **Does mimo work with an existing CLAUDE.md?**
 Yes. mimo only **appends** the memory sections to the bottom — it never rewrites the top of your file, so your existing content stays byte-for-byte intact. (This is a change from older versions, which prepended a workflow block and could duplicate the `# CLAUDE.md` title.)
 
@@ -366,7 +384,7 @@ By default (`AUTO_INIT=git-only`) mimo auto-inits only inside a git repository, 
 mimo backs up the full transcript before compaction and outputs custom instructions to preserve critical context. After compaction, the session-start hook injects a reminder, and the UserPromptSubmit hook automatically injects your memory state (current focus, key decisions) on your first prompt — no need to manually read CLAUDE.md. Save flags persist across compaction. The injected memory is framed as recovered *reference*, not instructions, with explicit hand-off rules: your next message is the single source of truth, so Claude won't auto-resume or "finish" prior work unless you ask (topic overlap alone isn't a request), and it won't invent past decisions the memory doesn't actually record.
 
 **Is my data safe when I uninstall?**
-Yes. Uninstall removes hooks, settings entries, and the CLI, but preserves all your data: `~/.claude/backups/`, `~/.claude/memory-state/`, and project `CLAUDE.md`/`CLAUDE-FULL.md` files.
+Yes. Uninstall removes hooks, settings entries, and the CLI, but preserves all your data: `~/.claude/mimo.conf`, `~/.claude/mimo-user.md` (your user profile), `~/.claude/backups/`, `~/.claude/memory-state/`, and project `CLAUDE.md`/`CLAUDE-FULL.md` files.
 
 **How does the auto-update check work?**
 On session start, the `session-start.sh` hook checks GitHub for a newer version at most once every 24 hours. The check is throttled by the mtime of `~/.claude/memory-state/mimo-update-check` (a 24h TTL), and the actual version fetch runs as a backgrounded `curl` — it never blocks session start. When a newer version is found, mimo shows a notification in the injected session context. Nothing is installed automatically: run `mimo update` to install the latest version when you're ready.
@@ -390,7 +408,7 @@ Yes. When the stop hook triggers at 50% or 80%, Claude performs the save and the
 The stop hook verifies saves by evidence, not trust: it records when it asked for a save and only marks it done once `CLAUDE.md`'s modification time advances past that moment (or Claude says "checkpoint saved" / "memory saved"). If a save crashes or is skipped, the hook retries the request exactly once on the next stop. If the second attempt still shows no write to `CLAUDE.md`, mimo gives up and lets the session continue — it never blocks you forever waiting on a save that isn't happening, and it never records a save that didn't happen as done.
 
 **Do subagents know about mimo?**
-Yes. The SubagentStart hook automatically injects "Memory — Current State", the "Memory — Project Card" durable facts, and the parent session's context % into every subagent. Subagents can see what you're working on, the project's stack/conventions/tool-rules, and how much context remains without any extra configuration.
+Yes. The SubagentStart hook automatically injects "Memory — Current State", the "Memory — Project Card" durable facts, the parent session's context %, and the standing `INSTRUCTION` rules from your user profile into every subagent. Subagents can see what you're working on, the project's stack/conventions/tool-rules, your standing rules of engagement, and how much context remains without any extra configuration.
 
 **Are file changes tracked?**
 Yes. The PostToolUse hook runs asynchronously after every Write or Edit operation and appends the file path to a per-session changes log. When a checkpoint or full save is triggered, the save instructions include the full list of files modified in the session, so nothing is forgotten.

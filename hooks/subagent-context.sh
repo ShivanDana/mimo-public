@@ -31,8 +31,18 @@ if [ -f "$STATE_FILE" ]; then
     CTX_PCT=$(jq -r '.percentage // ""' "$STATE_FILE" 2>/dev/null || echo "")
 fi
 
+# User-profile INSTRUCTION lines (P12): standing rules like "never auto-push" are
+# exactly what subagents violate today — inject those; prose preferences about
+# output style are noise for a subagent, so PREFERENCE/WORKFLOW/CONTEXT are left
+# out here. `|| true` guards a SIGPIPE from head closing the grep early.
+PROFILE_FILE="${MIMO_USER_PROFILE_FILE:-$HOME/.claude/mimo-user.md}"
+PROFILE_INSTRUCTIONS=""
+if [ -f "$PROFILE_FILE" ]; then
+    PROFILE_INSTRUCTIONS=$(grep '^- INSTRUCTION:' "$PROFILE_FILE" 2>/dev/null | head -5 || true)
+fi
+
 # If no useful info, exit silently
-if [ -z "$MEMORY_STATE" ] && [ -z "$PROJECT_CARD" ] && [ -z "$CTX_PCT" ]; then
+if [ -z "$MEMORY_STATE" ] && [ -z "$PROJECT_CARD" ] && [ -z "$CTX_PCT" ] && [ -z "$PROFILE_INSTRUCTIONS" ]; then
     exit 0
 fi
 
@@ -46,6 +56,9 @@ if [ -n "$MEMORY_STATE" ]; then
 fi
 if [ -n "$PROJECT_CARD" ]; then
     MSG="${MSG}\nMemory — Project Card:\n${PROJECT_CARD}"
+fi
+if [ -n "$PROFILE_INSTRUCTIONS" ]; then
+    MSG="${MSG}\nUser instructions (standing rules):\n${PROFILE_INSTRUCTIONS}"
 fi
 
 jq -n --arg ctx "$(echo -e "$MSG")" \

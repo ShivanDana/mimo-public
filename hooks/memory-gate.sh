@@ -110,6 +110,23 @@ if [ ! -f "$CWD/CLAUDE.md" ]; then
     exit 0
 fi
 
+# ── P13 baseline: current changes-log line count ─────────────────────────────
+# On a verified save or a durable give-up we reset changes_at_save to the current
+# log line count — that baseline reset is the file-change trigger's disarm (the
+# statusline arms off CHANGES - changes_at_save). Derive the log path the same
+# way the request path does; `|| true` so a SIGPIPE/short-read on a huge log
+# never aborts the gate, and a missing log means a baseline of 0.
+CHANGES_LOG="${MIMO_CHANGES_LOG:-}"
+if [ -z "$CHANGES_LOG" ]; then
+    SID=$(basename "$STATE_FILE" .json)
+    CHANGES_LOG="$STATE_DIR/${SID}-changes.log"
+fi
+CHANGES_NOW=0
+if [ -f "$CHANGES_LOG" ]; then
+    CHANGES_NOW=$(wc -l < "$CHANGES_LOG" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$CHANGES_NOW" in ''|*[!0-9]*) CHANGES_NOW=0 ;; esac
+fi
+
 # ── e. VERIFICATION PATH ─────────────────────────────────────────────────────
 # A save is verified by CLAUDE.md's mtime advancing to/after the request time.
 # The legacy phrase-grep on the last assistant message is a secondary signal
@@ -140,9 +157,9 @@ if [ "$SAVED" = "true" ]; then
         esac
     fi
     if [ "$KIND" = "fullsave" ]; then
-        write_state '.checkpoint_done = true | .fullsave_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = ""' "$STATE_FILE"
+        write_state --argjson cn "$CHANGES_NOW" '.checkpoint_done = true | .fullsave_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = "" | .changes_at_save = $cn' "$STATE_FILE"
     else
-        write_state '.checkpoint_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = ""' "$STATE_FILE"
+        write_state --argjson cn "$CHANGES_NOW" '.checkpoint_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = "" | .changes_at_save = $cn' "$STATE_FILE"
     fi
     exit 0
 fi
@@ -165,9 +182,9 @@ if [ "$SAVE_ATTEMPTS" -ge 2 ]; then
         esac
     fi
     if [ "$GIVEUP_KIND" = "fullsave" ]; then
-        write_state '.checkpoint_done = true | .fullsave_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = ""' "$STATE_FILE"
+        write_state --argjson cn "$CHANGES_NOW" '.checkpoint_done = true | .fullsave_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = "" | .changes_at_save = $cn' "$STATE_FILE"
     else
-        write_state '.checkpoint_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = ""' "$STATE_FILE"
+        write_state --argjson cn "$CHANGES_NOW" '.checkpoint_done = true | .threshold = "clean" | .save_requested_at = 0 | .save_attempts = 0 | .pending_save_kind = "" | .changes_at_save = $cn' "$STATE_FILE"
     fi
     exit 0
 fi

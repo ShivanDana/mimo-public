@@ -16,10 +16,13 @@ WORKFLOW_BLOCK=off
 STALE_MINUTES=120
 CHECKPOINT_THRESHOLD=50
 FULLSAVE_THRESHOLD=80
+USER_PROFILE=on
 MIMO_CONF="${MIMO_CONF:-$HOME/.claude/mimo.conf}"
 # shellcheck disable=SC1090
 [ -f "$MIMO_CONF" ] && . "$MIMO_CONF"
 TEMPLATES_DIR="${MIMO_TEMPLATES_DIR:-$HOME/.claude/mimo-templates}"
+# Cross-project user profile (P12). Env override for tests; never $HOME/CLAUDE.md.
+MIMO_USER_PROFILE_FILE="${MIMO_USER_PROFILE_FILE:-$HOME/.claude/mimo-user.md}"
 
 # Read stdin JSON
 INPUT=$(cat)
@@ -46,7 +49,7 @@ write_state() {
 # Includes the gate-owned verification fields so a fresh file is complete.
 if [ ! -f "$STATE_FILE" ]; then
     write_state -n --arg sid "$SESSION_ID" \
-        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false, save_requested_at: 0, save_attempts: 0, pending_save_kind: ""}'
+        '{session_id: $sid, percentage: 0, threshold: "clean", checkpoint_done: false, fullsave_done: false, save_requested_at: 0, save_attempts: 0, pending_save_kind: "", changes_at_save: 0}'
 fi
 
 # Export env vars for other hooks via CLAUDE_ENV_FILE
@@ -258,6 +261,17 @@ if [ -f "$CWD/CLAUDE-FULL.md" ]; then
         MSG="${MSG}\nDeep memory archive: CLAUDE-FULL.md (${LINES} lines, latest: ${LATEST_ANCHOR}). Locate sessions with grep '^## S'."
     else
         MSG="${MSG}\nDeep memory archive: CLAUDE-FULL.md (${LINES} lines). Locate sessions with grep '^## S'."
+    fi
+fi
+
+# Cross-project user profile (P12): inject the whole file (it is capped ≤20
+# lines) under a clear header so Claude reads it as declarative facts about the
+# user. Absent file → no injection, zero cost. USER_PROFILE=off disables it (the
+# file is never deleted by mimo). `head -c 2000 || true` bounds + SIGPIPE-guards.
+if [ "$USER_PROFILE" = "on" ] && [ -f "$MIMO_USER_PROFILE_FILE" ]; then
+    PROFILE_CONTENT=$(head -c 2000 "$MIMO_USER_PROFILE_FILE" 2>/dev/null || true)
+    if [ -n "$PROFILE_CONTENT" ]; then
+        MSG="${MSG}\nUser profile (applies across projects):\n${PROFILE_CONTENT}"
     fi
 fi
 
