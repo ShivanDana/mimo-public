@@ -2,6 +2,22 @@
 
 All notable changes to mimo will be documented in this file.
 
+## [2.1.0] - 2026-07-08
+
+**Memory protocol v2.1 — reconciled saves.** The `/save` and `/save-full` protocols (single-sourced in `skills/save*/SKILL.md`, emitted by the `Stop` gate at threshold interrupts) now reconcile new facts against existing memory instead of appending. Prompt-text and template changes only — no hook logic changes beyond one banner line and the gate fallback. Distilled from studying five long-term-memory systems (graphiti, hindsight, honcho, cognee, hermes); see `memory-learnings.md`.
+
+### Added
+- **Reconcile-before-write**: before writing to "Memory — Recent Sessions" or "Memory — Key Decisions", each candidate fact is classified against the existing entries — DUPLICATE (skip), MORE-SPECIFIC UPDATE (edit the line in place), CONTRADICTION/REVERSAL (supersede + add), or NEW (add). Facts differing in numbers, dates, or key qualifiers are never treated as duplicates, and two contradictory "current" facts never coexist. The full save records a one-clause audit in the `§S<N>` log of which entry changed and why.
+- **Durability gate + permission to write nothing**: "Memory — Key Decisions" admits only facts that will still matter in a month. Transient facts (commit SHAs, PR numbers, "phase N done", file counts) stay in the `§S<N>` archive log. Transient observations are converted to durable form. If nothing durable happened, the save writes "(no durable learnings)" rather than manufacturing a decision; `/save` may update only Current State when nothing durable changed.
+- **Supersession notation + arc phrasing**: a reversed decision marks the old line `[superseded YYYY-MM-DD → §S<N>]` and is written as one arc ("Originally X (date); changed to Y (date) because Z"). `/save-full` sweeps superseded index lines into their referenced `§S<N>` archive entry — invalidate-then-archive, never silent deletion.
+- **Memory conflict read rule**: the SessionStart banner now tells Claude that when two memory entries disagree the later date wins, a `[superseded]` line is history not guidance, and unresolved conflicts should surface both.
+- **Line-format discipline**: index entries are standalone dated subject-verb-object sentences naming entities verbatim (file paths, function names, flags), never imperatives (which get re-read as directives and cause redone work); unverified hunches are marked `[inferred]`; secrets (API keys, tokens, passwords, connection strings) are replaced with `[REDACTED]`.
+
+### Changed
+- **Key Decisions cap is now merit-consolidated, not FIFO**: at more than 10 entries, `/save-full` merges overlapping entries and evicts superseded and lowest-value ones (keeping non-obvious decisions and reversals over routine confirmations) rather than dropping the oldest — the 10 kept are the 10 most valuable, not the 10 most recent.
+- **Byte-for-byte delta editing**: saves edit `CLAUDE.md` surgically, leaving every still-accurate line byte-for-byte identical (no rewording, reordering, or restyling) so the git-visible memory files keep reviewable diffs.
+- **Templates + gate fallback document the new conventions**: `templates/claude-md-memory-sections.md`, `templates/CLAUDE-FULL.md`, and the `memory-gate.sh` built-in fallback teach the `[superseded …]` marker, dated declarative one-liner format, and merit-consolidated cap.
+
 ## [2.0.0] - 2026-07-08
 
 ### BREAKING

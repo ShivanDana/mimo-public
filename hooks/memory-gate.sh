@@ -66,6 +66,7 @@ emit_skill_body() {
             "1. Read CLAUDE.md. Then run: grep -n '^## S' CLAUDE-FULL.md | tail -3  (find the last session number) and tail -30 CLAUDE-FULL.md (see the latest entry). Do NOT read the whole archive." \
             "2. Update CLAUDE.md \"Memory — Current State\" (date, focus, blockers) and \"Memory — Recent Sessions\"" \
             "3. Append a new session under a \"## S<N> — YYYY-MM-DD — <slug>\" heading in CLAUDE-FULL.md (N = last + 1, S1 if none); reference it from CLAUDE.md as [CLAUDE-FULL.md §S<N>]" \
+            "4. Reconcile: edit or supersede existing entries (mark a reversed line [superseded YYYY-MM-DD → §S<N>]) instead of appending duplicates." \
             "Then say \"$2\" and IMMEDIATELY resume the task you were on."
     fi
 }

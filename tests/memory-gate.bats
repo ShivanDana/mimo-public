@@ -67,7 +67,46 @@ teardown() { mimo_teardown; }
     seed_state "$MIMO_STATE_FILE" threshold=checkpoint_needed percentage=55
     run bash "$GATE" <<<"$(hook_json sess-1 "$MIMO_CWD")"
     [ "$status" -eq 2 ]
-    [[ "$output" == *"Save a checkpoint of your current work"* ]]
+    [[ "$output" == *"Save a quick checkpoint"* ]]
+}
+
+# The emitted protocol (real skill files) carries the v2.1 reconcile rules: the
+# 4-way classification (DUPLICATE) and the supersession marker convention.
+@test "gate: emitted protocol carries the reconcile classification and supersession marker" {
+    seed_state "$MIMO_STATE_FILE" threshold=checkpoint_needed percentage=55
+    run bash "$GATE" <<<"$(hook_json sess-1 "$MIMO_CWD")"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"DUPLICATE"* ]]
+    [[ "$output" == *"superseded"* ]]
+}
+
+# Anchor steps survive the rewrite; the pre-v2 "line references" wording does not.
+@test "gate: emitted protocol keeps anchor steps and drops line-reference wording" {
+    seed_state "$MIMO_STATE_FILE" threshold=checkpoint_needed percentage=55
+    run bash "$GATE" <<<"$(hook_json sess-1 "$MIMO_CWD")"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"grep -n '^## S'"* ]]
+    [[ "$output" == *"§S<N>"* ]]
+    [[ "$output" != *"line references"* ]]
+}
+
+# The full-save protocol adds the merit-based cap and the superseded-line sweep.
+@test "gate: fullsave protocol carries merit consolidation and the superseded sweep" {
+    seed_state "$MIMO_STATE_FILE" threshold=fullsave_needed percentage=85
+    run bash "$GATE" <<<"$(hook_json sess-1 "$MIMO_CWD")"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"most valuable"* ]]
+    [[ "$output" == *"invalidate-then-archive"* ]]
+}
+
+# Budget: each SKILL.md stays well within the instruction budget (65-line target,
+# 80-line ceiling) so the protocol never balloons the gate emission.
+@test "gate: skill files stay within the line budget" {
+    local n
+    for f in save save-full; do
+        n=$(awk 'END{print NR}' "$MIMO_SKILLS_DIR/$f/SKILL.md")
+        [ "$n" -le 80 ]
+    done
 }
 
 @test "gate: falls back to built-in instructions when skill file missing" {

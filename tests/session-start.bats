@@ -50,6 +50,16 @@ run_ss() {
     [[ "$ctx" == *"Checkpoints at 40% context, full save at 70%"* ]]
 }
 
+# P5 read rule: the injected context carries the memory-conflict resolution rule
+# and the JSON stays valid.
+@test "session-start: banner carries the latest-wins conflict rule" {
+    run_ss sess-1 "$PROJECT_DIR"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null
+    [[ "$ctx" == *"later date wins"* ]]
+    [[ "$ctx" == *"[superseded]"* ]]
+}
+
 # ── Auto-init matrix ─────────────────────────────────────────────────────────
 
 @test "auto-init git-only: initializes inside a git repo" {

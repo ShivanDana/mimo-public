@@ -30,6 +30,7 @@ flowchart LR
 ## What it does
 
 - **Automatic memory saves** — checkpoints at 50% context, full save at 80%. Claude writes session state to disk before context is lost, then resumes the interrupted task automatically
+- **Reconciled, not appended** — saves update existing entries in place, supersede reversed decisions (`[superseded …]`), suppress duplicates, and durability-gate the index so it never fills with stale SHAs and finished to-dos
 - **Two-tier archive** — compact index in `CLAUDE.md` (auto-loaded every session) + detailed logs in `CLAUDE-FULL.md` (read on demand)
 - **Multi-project safe** — run 3+ Claude Code sessions simultaneously with fully isolated state per session
 - **Subagent awareness** — subagents automatically receive session state and context % so they share the parent session's memory
@@ -107,6 +108,8 @@ flowchart TB
 
 `CLAUDE.md` entries reference sessions in `CLAUDE-FULL.md` by **anchor** (e.g., `[CLAUDE-FULL.md §S12]`). Each session is a heading `## S<N> — YYYY-MM-DD — <slug>`; Claude locates one with `grep -n '^## S' CLAUDE-FULL.md` and reads from that line — no need to load the whole archive. Anchors don't rot when the archive is edited, unlike the line ranges older versions used. Run `mimo sessions` to list every anchor in the current project.
 
+When a decision changes, the old index line is marked `[superseded YYYY-MM-DD → §S12]` rather than deleted, and the reversal is written as one arc ("Originally X; changed to Y because Z"). The reading rule, injected into every session's context, is **latest-wins**: when two entries disagree the later date wins, a `[superseded]` line is history rather than current guidance, and a conflict that dates can't resolve surfaces both. Superseded lines are swept into their `§S<N>` archive entry on the next full save (invalidate-then-archive), so the index stays current while history is preserved.
+
 ### Session lifecycle
 
 ```mermaid
@@ -173,6 +176,8 @@ The status line tracks context window usage in real time:
 The stop hook blocks Claude from ending a turn until the required save is complete.
 
 **Verified saves.** The stop hook does not take Claude's word for it. When a threshold is crossed it records the request time and blocks; on the next stop it confirms the save actually happened by checking that `CLAUDE.md`'s modification time advanced past the request time (a phrase like "checkpoint saved" is accepted as a secondary signal). Only then are the done flags set. A crashed or skipped save is retried once; if the second attempt still shows no write, mimo gives up and lets the session continue rather than blocking forever. Evidence, not trust.
+
+**Reconciled writes.** A save doesn't just append. Before writing to the index, each new fact is classified against the existing entries — duplicate (skip), more-specific update (edit the line in place), contradiction (mark the old line `[superseded …]` and add the new one), or genuinely new (add) — so the index never accumulates duplicates or two conflicting "current" facts. A **durability gate** keeps the always-loaded index lean: only facts that will still matter in a month go in, while transient details (commit SHAs, PR numbers, file counts, "phase N done") stay in the detailed `CLAUDE-FULL.md` log. If nothing durable happened, the save records "(no durable learnings)" rather than manufacturing a decision. At more than 10 Key Decisions, mimo consolidates by merit — merging and evicting the lowest-value entries — instead of dropping the oldest.
 
 ### Slash commands
 
@@ -341,6 +346,9 @@ Current project:
 
 **Why not just use Claude Code's native memory / `#` memories?**
 Different job. mimo's memory lives in your project as plain `CLAUDE.md` / `CLAUDE-FULL.md` files that are **git-visible and committable** — they travel with the repo, review in PRs, and work on any machine that clones it, no account or sync service involved. Saves are **threshold-triggered** (checkpoints at 50% context, full save at 80%) and **verified by file mtime** rather than trusted, so a skipped save is caught and retried. And every session's transcript is **backed up** locally before compaction and on exit. It complements native memory — use both — but the durable, portable, reviewable session log is the part mimo owns.
+
+**How does mimo avoid stale or duplicated memory?**
+Every save reconciles before it writes. Each new fact is classified against the existing entries — a duplicate is skipped, a more-specific version edits the existing line in place, and a contradiction marks the old line `[superseded YYYY-MM-DD → §S12]` and adds the new one, so two conflicting "current" facts never coexist and the same fact is never recorded twice. A **durability gate** keeps the always-loaded index lean: only facts that will still matter in a month are indexed, while transient details (SHAs, PR numbers, file counts) stay in the `CLAUDE-FULL.md` archive — and if nothing durable happened, the save writes "(no durable learnings)" instead of inventing one. When the Key Decisions list passes 10 entries, mimo consolidates by **merit** (merging overlaps, evicting superseded and lowest-value lines) rather than dropping the oldest. On read, a **latest-wins** rule resolves any remaining conflict: the later-dated entry stands, and a `[superseded]` line is treated as history. This protocol was distilled from studying five long-term-memory systems — graphiti, hindsight, honcho, cognee, and hermes (see `memory-learnings.md`).
 
 **Does mimo work with an existing CLAUDE.md?**
 Yes. mimo only **appends** the memory sections to the bottom — it never rewrites the top of your file, so your existing content stays byte-for-byte intact. (This is a change from older versions, which prepended a workflow block and could duplicate the `# CLAUDE.md` title.)

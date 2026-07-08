@@ -135,7 +135,8 @@ Blockers: None
 <!-- Each entry references a CLAUDE-FULL.md anchor like [CLAUDE-FULL.md §S12] -->
 
 ## Memory — Key Decisions
-<!-- One-liner + CLAUDE-FULL.md anchor (e.g. [CLAUDE-FULL.md §S12]); max 10, move oldest into its session entry -->
+<!-- Durable decisions only; one dated line + anchor [CLAUDE-FULL.md §S12]. Reconcile before adding: -->
+<!-- edit in place, or mark a reversed line [superseded YYYY-MM-DD → §S12]. Max 10, merit-consolidated (not oldest-dropped). -->
 MEMORY_SECTIONS
     fi
 }
@@ -231,6 +232,10 @@ MSG="[MIMO ACTIVE] Memory hooks enabled. Checkpoints at ${CHECKPOINT_THRESHOLD}%
 if [ -n "$AUTO_INIT_MSG" ]; then
     MSG="${MSG}\n${AUTO_INIT_MSG}"
 fi
+
+# Memory conflict read rule (P5): the always-loaded index may hold superseded
+# lines; tell Claude how to resolve a disagreement without re-reading the archive.
+MSG="${MSG}\nMemory conflict rule: when two entries disagree, the later date wins; a line marked [superseded] is history, not current guidance. If dates cannot resolve a conflict, surface both."
 
 # Check for deep memory archive. Reference sessions by anchor (## S<N>), not
 # line ranges — surface the latest session number so recall is a single grep.
