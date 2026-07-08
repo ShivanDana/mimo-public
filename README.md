@@ -29,12 +29,13 @@ flowchart LR
 
 ## What it does
 
-- **Automatic memory saves** — checkpoints at 50% context, full save at 80%. Claude writes session state to disk before context is lost, then resumes the interrupted task automatically
+- **Automatic memory saves** — checkpoints at 50% context, full save at 80%, plus a checkpoint after every 40 file changes (so heavy low-context sessions save too). Claude writes session state to disk before context is lost, then resumes the interrupted task automatically
 - **Reconciled, not appended** — saves update existing entries in place, supersede reversed decisions (`[superseded …]`), suppress duplicates, and durability-gate the index so it never fills with stale SHAs and finished to-dos
 - **Two-tier archive** — compact index in `CLAUDE.md` (auto-loaded every session) + detailed logs in `CLAUDE-FULL.md` (read on demand)
 - **Multi-project safe** — run 3+ Claude Code sessions simultaneously with fully isolated state per session
-- **Subagent awareness** — subagents automatically receive session state and context % so they share the parent session's memory
-- **File change tracking** — modified files are tracked per-session and included in save instructions so nothing is missed
+- **Subagent awareness** — subagents automatically receive session state, the Project Card's durable facts, your standing INSTRUCTION rules, and context % so they share the parent session's memory
+- **File change tracking** — modified files are tracked per-session, included in save instructions, and counted toward the file-change save trigger so nothing is missed
+- **Cross-project user profile** — how you work (preferences, standing rules) lives in `~/.claude/mimo-user.md` and follows you into every project
 - **Post-compact recovery** — memory state is automatically injected after compaction without extra tool calls
 - **Auto-update notifications** — checks for new versions once per day (background, never blocks). Run `mimo update` when notified
 - **Zero configuration** — install once, start a session, mimo auto-initializes everything. Use `/save` anytime to save manually
@@ -167,10 +168,10 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> clean : Session starts
-    clean --> checkpoint_needed : Context hits 50%
-    checkpoint_needed --> clean : "checkpoint saved"
+    clean --> checkpoint_needed : Context hits 50%\nor 40 file changes
+    checkpoint_needed --> clean : save verified\n(CLAUDE.md mtime)
     clean --> fullsave_needed : Context hits 80%
-    fullsave_needed --> clean : "memory saved"
+    fullsave_needed --> clean : save verified\n(CLAUDE.md mtime)
     clean --> [*] : Session ends
 ```
 
@@ -345,6 +346,12 @@ Dependencies:
   [ok] jq 1.7.1
   [ok] bash 5.2.37(1)-release
 
+Config:
+  [-]  defaults (no ~/.claude/mimo.conf)
+
+User profile:
+  [-]  absent (written on the first /save-full with cross-project signal)
+
 Active sessions:
   [-]  No active sessions
 
@@ -363,7 +370,7 @@ Current project:
 ### FAQ
 
 **Why not just use Claude Code's native memory / `#` memories?**
-Different job. mimo's memory lives in your project as plain `CLAUDE.md` / `CLAUDE-FULL.md` files that are **git-visible and committable** — they travel with the repo, review in PRs, and work on any machine that clones it, no account or sync service involved. Saves are **threshold-triggered** (checkpoints at 50% context, full save at 80%) and **verified by file mtime** rather than trusted, so a skipped save is caught and retried. And every session's transcript is **backed up** locally before compaction and on exit. It complements native memory — use both — but the durable, portable, reviewable session log is the part mimo owns.
+Different job. mimo's memory lives in your project as plain `CLAUDE.md` / `CLAUDE-FULL.md` files that are **git-visible and committable** — they travel with the repo, review in PRs, and work on any machine that clones it, no account or sync service involved. Saves are **threshold-triggered** (checkpoints at 50% context or 40 file changes, full save at 80%) and **verified by file mtime** rather than trusted, so a skipped save is caught and retried. And every session's transcript is **backed up** locally before compaction and on exit. It complements native memory — use both — but the durable, portable, reviewable session log is the part mimo owns.
 
 **How does mimo avoid stale or duplicated memory?**
 Every save reconciles before it writes. Each new fact is classified against the existing entries — a duplicate is skipped, a more-specific version edits the existing line in place, and a contradiction marks the old line `[superseded YYYY-MM-DD → §S12]` and adds the new one, so two conflicting "current" facts never coexist and the same fact is never recorded twice. A **durability gate** keeps the always-loaded index lean: only facts that will still matter in a month are indexed, while transient details (SHAs, PR numbers, file counts) stay in the `CLAUDE-FULL.md` archive — and if nothing durable happened, the save writes "(no durable learnings)" instead of inventing one. When the Key Decisions list passes 10 entries, mimo consolidates by **merit** (merging overlaps, evicting superseded and lowest-value lines) rather than dropping the oldest. On read, a **latest-wins** rule resolves any remaining conflict: the later-dated entry stands, and a `[superseded]` line is treated as history. This protocol was distilled from studying five long-term-memory systems — graphiti, hindsight, honcho, cognee, and hermes (see `memory-learnings.md`).
@@ -411,7 +418,7 @@ The stop hook verifies saves by evidence, not trust: it records when it asked fo
 Yes. The SubagentStart hook automatically injects "Memory — Current State", the "Memory — Project Card" durable facts, the parent session's context %, and the standing `INSTRUCTION` rules from your user profile into every subagent. Subagents can see what you're working on, the project's stack/conventions/tool-rules, your standing rules of engagement, and how much context remains without any extra configuration.
 
 **Are file changes tracked?**
-Yes. The PostToolUse hook runs asynchronously after every Write or Edit operation and appends the file path to a per-session changes log. When a checkpoint or full save is triggered, the save instructions include the full list of files modified in the session, so nothing is forgotten.
+Yes. The PostToolUse hook runs asynchronously after every Write, Edit, or NotebookEdit operation and appends the file path to a per-session changes log (mimo's own memory files are excluded, so saves don't count toward the trigger they cause). When a checkpoint or full save is triggered, the save instructions include the full list of files modified in the session — merged with `git status` — so nothing is forgotten. The same count arms the file-change save trigger (`SAVE_AFTER_CHANGES`).
 
 ## Uninstall
 
@@ -425,7 +432,7 @@ Or standalone:
 curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/uninstall.sh | bash
 ```
 
-This removes hooks, skills, settings entries, and the CLI but **preserves your data** — backups, per-session state files, and project memory files.
+This removes hooks, skills, settings entries, and the CLI but **preserves your data** — `mimo.conf`, your user profile (`mimo-user.md`), backups, per-session state files, and project memory files.
 
 ## Development
 

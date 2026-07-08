@@ -28,6 +28,8 @@ AUTO_INIT=git-only
 WORKFLOW_BLOCK=off
 BACKUP_RETENTION_DAYS=30
 STALE_MINUTES=120
+SAVE_AFTER_CHANGES=40
+USER_PROFILE=on
 MIMO_CONF="${MIMO_CONF:-$HOME/.claude/mimo.conf}"
 # shellcheck disable=SC1090
 [ -f "$MIMO_CONF" ] && . "$MIMO_CONF"
@@ -116,6 +118,8 @@ cmd_status() {
         [ "$WORKFLOW_BLOCK" != "off" ]       && OVERRIDES="$OVERRIDES WORKFLOW_BLOCK=$WORKFLOW_BLOCK"
         [ "$BACKUP_RETENTION_DAYS" != "30" ] && OVERRIDES="$OVERRIDES BACKUP_RETENTION_DAYS=$BACKUP_RETENTION_DAYS"
         [ "$STALE_MINUTES" != "120" ]        && OVERRIDES="$OVERRIDES STALE_MINUTES=$STALE_MINUTES"
+        [ "$SAVE_AFTER_CHANGES" != "40" ]    && OVERRIDES="$OVERRIDES SAVE_AFTER_CHANGES=$SAVE_AFTER_CHANGES"
+        [ "$USER_PROFILE" != "on" ]          && OVERRIDES="$OVERRIDES USER_PROFILE=$USER_PROFILE"
         if [ -n "$OVERRIDES" ]; then
             ok "$MIMO_CONF (overrides:)"
             for kv in $OVERRIDES; do dim "$kv"; done
