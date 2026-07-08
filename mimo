@@ -151,7 +151,7 @@ cmd_status() {
             SID=$(jq -r '.session_id // "?"' "$sf" 2>/dev/null || echo "?")
             PCT=$(jq -r '.percentage // 0' "$sf" 2>/dev/null || echo "0")
             THRESHOLD=$(jq -r '.threshold // "clean"' "$sf" 2>/dev/null || echo "clean")
-            LAST_UPDATE=$(stat -f %m "$sf" 2>/dev/null || stat -c %Y "$sf" 2>/dev/null || echo "0")
+            LAST_UPDATE=$(stat -c %Y "$sf" 2>/dev/null || stat -f %m "$sf" 2>/dev/null || echo "0")
             AGE=$(( NOW - LAST_UPDATE ))
             if [ "$AGE" -gt "$STALE_THRESHOLD" ]; then
                 dim "${SID}: ${PCT}%, stale (last seen $(( AGE / 3600 ))h ago)"
@@ -379,7 +379,7 @@ cmd_cleanup() {
         for f in "$STATE_DIR"/*.json; do
             [ -f "$f" ] || continue
             case "$f" in *.tmp) continue ;; esac
-            LAST_UPDATE=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo "0")
+            LAST_UPDATE=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "0")
             AGE=$(( NOW - LAST_UPDATE ))
             if [ "$AGE" -gt "$STALE_THRESHOLD" ]; then
                 SID=$(basename "$f" .json)
@@ -594,7 +594,7 @@ cmd_doctor() {
         for f in "$STATE_DIR"/*.json; do
             [ -f "$f" ] || continue
             case "$f" in *.tmp) continue ;; esac
-            LU=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+            LU=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
             [ $(( NOW - LU )) -gt "$STALE_THRESHOLD" ] && STALE=$((STALE + 1))
         done
     fi

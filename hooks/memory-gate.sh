@@ -34,9 +34,12 @@ write_state() {
     fi
 }
 
-# Portable mtime (BSD stat -f %m / GNU stat -c %Y), 0 on failure.
+# Portable mtime, 0 on failure. GNU (stat -c %Y) MUST come first: on GNU,
+# `stat -f` is filesystem mode — it emits garbage to stdout without cleanly
+# failing, and command substitution captures that even when the fallback also
+# runs. BSD's `stat -c` fails silently to stderr, so GNU-first is safe on both.
 file_mtime() {
-    stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
 }
 
 # Emit the body of an installed skill (everything after the YAML frontmatter),

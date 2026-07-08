@@ -95,8 +95,10 @@ if [ -n "$INSTALLED_VERSION" ]; then
     if [ ! -f "$UPDATE_CHECK_FILE" ]; then
         SHOULD_CHECK=true
     else
-        # Check if file is older than 24h (86400 seconds)
-        LAST_CHECK=$(stat -f %m "$UPDATE_CHECK_FILE" 2>/dev/null || stat -c %Y "$UPDATE_CHECK_FILE" 2>/dev/null || echo "0")
+        # Check if file is older than 24h (86400 seconds).
+        # GNU stat first — on GNU, `stat -f` is filesystem mode and pollutes stdout.
+        LAST_CHECK=$(stat -c %Y "$UPDATE_CHECK_FILE" 2>/dev/null || stat -f %m "$UPDATE_CHECK_FILE" 2>/dev/null || echo "0")
+        case "$LAST_CHECK" in ''|*[!0-9]*) LAST_CHECK=0 ;; esac
         NOW=$(date +%s)
         if [ $(( NOW - LAST_CHECK )) -gt 86400 ]; then
             SHOULD_CHECK=true
