@@ -1,5 +1,7 @@
 # mimo
 
+![CI](https://github.com/ShivanDana/mimo/actions/workflows/ci.yml/badge.svg)
+
 Hook-based memory system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Claude Code forgets everything between sessions — mimo fixes that with automatic checkpoints, a two-tier archive, and zero configuration.
 
 ```mermaid
@@ -244,13 +246,17 @@ mimo uninstall   # Remove mimo (preserves your memory data)
 | `~/.claude/skills/save-full/SKILL.md` | `/save-full` slash command | Install |
 | `~/.claude/skills/pcompact/SKILL.md` | `/pcompact` slash command | Install |
 | `~/.claude/settings.json` | Hook + statusline registration (merged) | Install |
+| `~/.claude/mimo.conf` | Your configuration (sourced by hooks + CLI; preserved across updates) | Install (seeded, commented) |
+| `~/.claude/mimo-templates/` | mimo-managed `CLAUDE.md` scaffolding (memory sections, workflow block, archive) | Install |
 | `~/.claude/memory-state/<session-id>.json` | Per-session state (context %, thresholds, flags) | Each session |
 | `~/.claude/memory-state/<session-id>-changes.log` | Per-session file change tracker | During sessions |
 | `~/.claude/memory-state/<session-id>-postcompact.flag` | One-shot post-compact context recovery flag | After compaction |
 | `~/.claude/memory-state/mimo-installed-version` | Installed version for update checks | Install |
 | `~/.claude/memory-state/mimo-update-check` | Cached remote version (24h TTL) | Session start |
-| `~/.claude/backups/*.jsonl` | Transcript backups (pre-compact + session-end) | During sessions |
+| `~/.claude/backups/<YYYYMMDD-HHMMSS>-<sid8>-{end,precompact}.jsonl` | Transcript backups (session-end + pre-compact), session-id-prefixed | During sessions |
+| `~/.claude/backups/<YYYYMMDD-HHMMSS>-precompact-summary.md` | Human-readable pre-compact summary | Before compaction |
 | `~/.local/bin/mimo` | CLI binary | Install |
+| `~/.local/bin/mimo-uninstall` | Standalone uninstaller | Install |
 | `<project>/CLAUDE.md` | Compact memory index (auto-loaded) | First session in project |
 | `<project>/CLAUDE-FULL.md` | Deep memory archive | First session in project |
 
@@ -310,6 +316,7 @@ Settings:
 Skills:
   [ok] /save
   [ok] /save-full
+  [ok] /pcompact
 
 Dependencies:
   [ok] jq 1.7.1
@@ -331,6 +338,9 @@ Current project:
 - **Hooks not firing** — Check `mimo status` and verify settings.json has the entries
 
 ### FAQ
+
+**Why not just use Claude Code's native memory / `#` memories?**
+Different job. mimo's memory lives in your project as plain `CLAUDE.md` / `CLAUDE-FULL.md` files that are **git-visible and committable** — they travel with the repo, review in PRs, and work on any machine that clones it, no account or sync service involved. Saves are **threshold-triggered** (checkpoints at 50% context, full save at 80%) and **verified by file mtime** rather than trusted, so a skipped save is caught and retried. And every session's transcript is **backed up** locally before compaction and on exit. It complements native memory — use both — but the durable, portable, reviewable session log is the part mimo owns.
 
 **Does mimo work with an existing CLAUDE.md?**
 Yes. mimo only **appends** the memory sections to the bottom — it never rewrites the top of your file, so your existing content stays byte-for-byte intact. (This is a change from older versions, which prepended a workflow block and could duplicate the `# CLAUDE.md` title.)
@@ -355,6 +365,9 @@ Yes. Use `/save` for a quick checkpoint or `/save-full` for a comprehensive save
 
 **Does mimo work with multiple projects open at the same time?**
 Yes. Each Claude Code session gets its own isolated state file (`~/.claude/memory-state/<session-id>.json`). Sessions cannot interfere with each other — checkpoints, thresholds, and save flags are fully independent. You can run an iOS project, a React CRM, and a research session simultaneously without issues.
+
+**What are "stale" sessions and do I need to clean them up?**
+The StatusLine hook rewrites a session's state file every few seconds, so its modification time is a heartbeat. If a session crashes or is force-quit, its state file stops updating — after 2 hours with no heartbeat (`STALE_MINUTES`) mimo treats it as stale. `mimo status` labels such sessions `stale (last seen Xh ago)` instead of active, and the next session start reaps dead-session state automatically. You can also run `mimo cleanup` to remove stale state triples, orphaned temp files, and old backups on demand — but you don't have to; it happens on its own.
 
 **Does Claude resume working after a save interruption?**
 Yes. When the stop hook triggers at 50% or 80%, Claude performs the save and then immediately picks up the task it was working on before the interruption. No need to re-ask.
@@ -381,6 +394,42 @@ curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/uninstall.sh |
 ```
 
 This removes hooks, skills, settings entries, and the CLI but **preserves your data** — backups, per-session state files, and project memory files.
+
+## Development
+
+### Repo layout
+
+```
+hooks/        9 hook scripts (the runtime) — statusline, memory-gate, session-*, track-changes, …
+skills/       /save, /save-full, /pcompact skill sources
+templates/    CLAUDE.md scaffolding + the mimo.conf seed
+mimo          the CLI
+install.sh    file-based installer (local clone or remote tarball)
+uninstall.sh  standalone uninstaller
+tests/        bats-core suite + helpers.bash (see tests/README.md)
+VERSION       single source of truth for the release version
+```
+
+### Single source of truth
+
+Every shipped file exists **once**. The installer copies `hooks/`, `skills/`, `templates/`, `mimo`, and `uninstall.sh` into `~/.claude` / `~/.local/bin` and stamps `__VERSION__` from `VERSION`. Edit the files **here** in the repo — never the installed copies in `~/.claude/hooks/`, which are overwritten on every update. `install.sh` embeds nothing but the `settings.json` hook registration.
+
+### Tests + lint
+
+```bash
+bats tests/        # full suite — runs each test under a throwaway $HOME
+shellcheck hooks/*.sh mimo install.sh uninstall.sh tests/helpers.bash
+```
+
+The suite is sandboxed: every test moves `$HOME` to a fresh `mktemp -d` and hard-refuses to run against your real home, so it never touches your live install. Shell scripts are expected to be **shellcheck-clean at default severity**. CI (`.github/workflows/ci.yml`) runs shellcheck, the bats suite on Ubuntu + macOS, and a sandboxed install → `mimo doctor` → uninstall end-to-end check on every push and PR to `main` / `feat/**`. See [`tests/README.md`](tests/README.md).
+
+### Releasing
+
+1. Bump `VERSION` (single source of truth).
+2. Move `## [Unreleased]` to `## [<VERSION>] - <date>` in `CHANGELOG.md`.
+3. Tag `v<VERSION>` and push the tag.
+
+The installer and `mimo update` prefer the matching `v<VERSION>` tag and fall back to `main` if the tag doesn't exist yet, so tagging is what promotes a release to `curl | bash` users.
 
 ## License
 
