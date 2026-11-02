@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mimo uninstaller — standalone script for removing mimo
-# Usage: curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/uninstall.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo-public/main/uninstall.sh | bash
 #    or: mimo uninstall
 # shellcheck disable=SC2059  # color codes in printf formats are intentional
 set -euo pipefail

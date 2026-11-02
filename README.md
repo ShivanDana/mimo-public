@@ -1,6 +1,6 @@
 # mimo
 
-![CI](https://github.com/ShivanDana/mimo/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/ShivanDana/mimo-public/actions/workflows/ci.yml/badge.svg)
 
 Hook-based memory system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Claude Code forgets everything between sessions — mimo fixes that with automatic checkpoints, a two-tier archive, and zero configuration.
 
@@ -53,13 +53,13 @@ flowchart LR
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo-public/main/install.sh | bash
 ```
 
 Or install from a local clone (no network required):
 
 ```bash
-git clone https://github.com/ShivanDana/mimo && bash mimo/install.sh
+git clone https://github.com/ShivanDana/mimo-public && bash mimo-public/install.sh
 ```
 
 The installer copies mimo's source files (hooks, skills, CLI, uninstaller) into `~/.claude` and `~/.local/bin` — the repo files are the single source of truth. When piped from `curl`, it downloads the matching release tarball first; from a clone, it installs those local files directly.
@@ -429,7 +429,7 @@ mimo uninstall
 Or standalone:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo-public/main/uninstall.sh | bash
 ```
 
 This removes hooks, skills, settings entries, and the CLI but **preserves your data** — `mimo.conf`, your user profile (`mimo-user.md`), backups, per-session state files, and project memory files.

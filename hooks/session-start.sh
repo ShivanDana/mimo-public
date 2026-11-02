@@ -109,7 +109,7 @@ if [ -n "$INSTALLED_VERSION" ]; then
         # Background fetch — never blocks session start
         (
             REMOTE=$(curl -fsSL --max-time 3 \
-                "https://raw.githubusercontent.com/ShivanDana/mimo/main/VERSION" 2>/dev/null | tr -d '[:space:]')
+                "https://raw.githubusercontent.com/ShivanDana/mimo-public/main/VERSION" 2>/dev/null | tr -d '[:space:]')
             [ -n "$REMOTE" ] && echo "$REMOTE" > "$UPDATE_CHECK_FILE"
         ) &
     fi

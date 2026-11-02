@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # mimo installer — hook-based memory system for Claude Code
-# Local mode:  git clone https://github.com/ShivanDana/mimo && bash mimo/install.sh
-# Remote mode: curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh | bash
+# Local mode:  git clone https://github.com/ShivanDana/mimo-public && bash mimo-public/install.sh
+# Remote mode: curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo-public/main/install.sh | bash
 #
 # The installer copies mimo's source files (hooks/, skills/, mimo, uninstall.sh)
 # into ~/.claude and ~/.local/bin. The repo files are the single source of truth;
@@ -22,8 +22,8 @@ warn()  { printf "${YELLOW}[mimo]${NC} %s\n" "$1"; }
 error() { printf "${RED}[mimo]${NC} %s\n" "$1" >&2; }
 step()  { printf "${BOLD}[%s/7]${NC} %s\n" "$1" "$2"; }
 
-REPO_RAW="https://raw.githubusercontent.com/ShivanDana/mimo"
-REPO_ARCHIVE="https://github.com/ShivanDana/mimo/archive/refs"
+REPO_RAW="https://raw.githubusercontent.com/ShivanDana/mimo-public"
+REPO_ARCHIVE="https://github.com/ShivanDana/mimo-public/archive/refs"
 
 # ─── Locate source files: local clone or remote tarball ─────────────────────────
 # When run from a clone, $BASH_SOURCE points at this script; when piped via
@@ -62,7 +62,7 @@ else
 
     tar -xzf "$TARBALL" -C "$TMP_SRC" || { error "Could not extract mimo source."; exit 1; }
 
-    # The tarball unpacks to a single top-level dir (mimo-<version> or mimo-main).
+    # The tarball unpacks to a single top-level dir (mimo-public-<version> or mimo-public-main).
     SRC_DIR=$(find "$TMP_SRC" -maxdepth 1 -mindepth 1 -type d | head -1 || true)
     if [ -z "$SRC_DIR" ] || [ ! -d "$SRC_DIR/hooks" ]; then
         error "Downloaded source is missing hooks/."

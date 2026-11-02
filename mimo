@@ -321,7 +321,7 @@ cmd_update() {
     echo ""
 
     REMOTE_VERSION=$(curl -fsSL --max-time 5 \
-        "https://raw.githubusercontent.com/ShivanDana/mimo/main/VERSION" 2>/dev/null | tr -d '[:space:]')
+        "https://raw.githubusercontent.com/ShivanDana/mimo-public/main/VERSION" 2>/dev/null | tr -d '[:space:]')
     if [ -z "$REMOTE_VERSION" ]; then
         error "Could not fetch remote version. Check your network connection."
         exit 1
@@ -339,8 +339,8 @@ cmd_update() {
 
     # Run the installer pinned to the target version. Fall back to main if the
     # version tag does not exist yet (tags may lag the VERSION file).
-    PINNED_URL="https://raw.githubusercontent.com/ShivanDana/mimo/v${REMOTE_VERSION}/install.sh"
-    MAIN_URL="https://raw.githubusercontent.com/ShivanDana/mimo/main/install.sh"
+    PINNED_URL="https://raw.githubusercontent.com/ShivanDana/mimo-public/v${REMOTE_VERSION}/install.sh"
+    MAIN_URL="https://raw.githubusercontent.com/ShivanDana/mimo-public/main/install.sh"
 
     INSTALLER=$(curl -fsSL "$PINNED_URL" 2>/dev/null || echo "")
     if [ -z "$INSTALLER" ]; then
@@ -358,7 +358,7 @@ cmd_uninstall() {
         exec bash "$HOME/.local/bin/mimo-uninstall"
     else
         printf "${RED}[mimo]${NC} mimo-uninstall not found. Run manually:\n" >&2
-        echo "  curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo/main/uninstall.sh | bash"
+        echo "  curl -fsSL https://raw.githubusercontent.com/ShivanDana/mimo-public/main/uninstall.sh | bash"
         exit 1
     fi
 }
@@ -735,7 +735,7 @@ Getting started:
   2. Start a Claude Code session — mimo auto-initializes your project
   3. Use 'mimo init' to manually reset memory files if needed
 
-Learn more: https://github.com/ShivanDana/mimo
+Learn more: https://github.com/ShivanDana/mimo-public
 HELP
 }
 
